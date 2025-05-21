@@ -1,0 +1,219 @@
+---
+title: "METABRIC Preprocessing"
+output: html_document
+date: "2025-05-20"
+---
+
+## Concordance index multiverse.
+
+
+Load libraries
+
+```{r, include=FALSE}
+library(rhdf5)
+library(tidyr)
+```
+
+From DeepSurv and DeSurv:
+
+```{r}
+# Dataset from Deep Surv, also used in DeSurv:
+h5_test <- h5read("./Datasets/metabric_IHC4_clinical_train_test.h5", 
+                  name="test")
+
+h5_train <- h5read("./Datasets/metabric_IHC4_clinical_train_test.h5",
+                   name="train")
+
+# Make a dataset for training:
+train <- data.frame(t(h5_train$x))
+train$status <- h5_train$e
+train$time <- h5_train$t
+
+# Make a dataset for test:
+test<- data.frame(t(h5_test$x))
+test$status <- h5_test$e
+test$time <- h5_test$t
+
+# Order
+test <- test[order(test$time, -test$status),]
+train <- train[order(train$time, -train$status),]
+test$time <- test$time + 1e-8
+train$time <- train$time + 1e-8
+
+mb <- rbind(train, test) # for crossvalidation settings
+
+```
+
+
+The data is directly downloaded from https://www.cbioportal.org/datasets
+
+Breast Cancer (METABRIC, Nature 2012 & Nat Commun 2016) - 
+
+Pereira et al. Nat Commun 2016, Rueda et al. Nature 2019, Curtis et al. Nature 2012
+
+Accessed on 21/May/2025
+
+
+If you were to run the following chunk, it is necessary to download the data from cbioportal:
+```{r, eval=FALSE}
+# Expression MKI67, EGFR, PGR, and ERBB2
+expression <- read.table("./Datasets/brca_metabric/data_mrna_illumina_microarray.txt",
+                       header = TRUE, 
+                       stringsAsFactors = FALSE)
+
+# Genes of interest form DeepSurv paper
+genes_of_interest <- c("MKI67", "EGFR", "PGR", "ERBB2")
+expr_subset <- expression[expression$Hugo_Symbol %in% genes_of_interest, ]
+# Subset interesting genes
+rownames(expr_subset) <- expr_subset$Hugo_Symbol
+expr_subset <- expr_subset[ , !(colnames(expr_subset) %in% c("Hugo_Symbol", "Entrez_Gene_Id"))]
+
+#Make it into df
+expr_subset <- as.data.frame(t(expr_subset))
+rownames(expr_subset) <- gsub("\\.", "-", rownames(expr_subset))
+expr_subset$PATIENT_ID <- rownames(expr_subset)
+
+
+# Reducing it to the interestings genes
+# For the whole expression dataset please download from cBioportal
+write.table(expr_subset, "./Datasets/brca_metabric/subset_data_mrna_illumina_microarray.txt",
+            sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+
+```
+
+
+```{r}
+
+# Clinical
+clinical <- read.delim("./Datasets/brca_metabric/data_clinical_patient.txt", 
+                       skip = 4, 
+                       header = TRUE, 
+                       stringsAsFactors = FALSE)
+
+
+#hormone treatment indicator, radiotherapy indicator, chemotherapy indicator, ER-positive indicator, age at diagnosis
+
+clincal_of_interest <- c("PATIENT_ID","HORMONE_THERAPY", "RADIO_THERAPY", 
+                         "CHEMOTHERAPY", "ER_IHC", "AGE_AT_DIAGNOSIS", 
+                         "OS_MONTHS", "OS_STATUS")
+
+clinical_subset <- clinical[,clincal_of_interest]
+
+# Load the subset with only 4 genes:
+expr_subset <- read.table("./Datasets/brca_metabric/subset_data_mrna_illumina_microarray.txt", 
+                          sep = "\t", header = TRUE)
+
+
+# Merge
+df <- merge(expr_subset, clinical_subset, by= "PATIENT_ID")
+
+# Some of them are empty 
+df[df == ""] <- NA
+
+# Get only complete cases.
+mb2 <- df[complete.cases(df),]
+
+# Making sure
+colSums(is.na(mb2))
+
+
+dim(mb2)
+head(mb2)
+
+```
+
+
+
+```{r}
+
+# Metabric
+
+mean(mb2$EGFR)
+mean(mb2$PGR)
+mean(mb2$ERBB2)
+mean(mb2$MKI67)
+
+## DeepSurv
+
+mean(mb$X1)
+mean(mb$X2)
+mean(mb$X3)
+mean(mb$X4)
+```
+```{r}
+table(mb2$OS_STATUS)
+```
+
+```{r}
+table(mb$status)
+```
+
+
+
+### Summary tables
+
+```{r}
+library(gtsummary)
+
+mb[c("X5", "X6", "X7", "X8")] <- lapply(mb[c("X5", "X6", "X7", "X8")], as.factor)
+
+ mb %>%
+  tbl_summary(
+    by = status,
+    statistic = list(all_continuous() ~ "{mean} ({sd})",
+                     all_categorical() ~ "{n} ({p}%)")
+  )
+
+
+```
+```{r}
+
+## recode to categorical 0/1
+
+cols_to_recode <- c("HORMONE_THERAPY", "RADIO_THERAPY", "CHEMOTHERAPY", "ER_IHC", "OS_STATUS")
+
+mb2[cols_to_recode] <- lapply(mb2[cols_to_recode], function(col) {
+  ifelse(col %in% c("YES", "Positve", "1:DECEASED"), 1, ## not positive... typo
+         ifelse(col %in% c("NO", "Negative", "0:LIVING"), 0, NA))
+})
+
+
+mb2[cols_to_recode] <- lapply(mb2[cols_to_recode], as.factor)
+
+ mb2[, c(2:12)] %>% 
+  tbl_summary(
+    by = OS_STATUS,
+    statistic = list(all_continuous() ~ "{mean} ({sd})",
+                     all_categorical() ~ "{n} ({p}%)"
+  ))
+ 
+```
+
+```{r, eval=FALSE}
+write.csv(mb2, "./Datasets/metabric_preprocess_multiverse.csv", row.names = FALSE)
+```
+
+```{r}
+library(dplyr)
+library(stringr)
+library(knitr)
+
+
+summary_table <- mb2[, c(2:12)] %>% 
+  tbl_summary(
+    by = OS_STATUS,
+    statistic = list(all_continuous() ~ "{mean} ({sd})",
+                     all_categorical() ~ "{n} ({p}%)")
+  )
+
+
+latex_code <- summary_table %>%
+  as_kable(format = "latex", booktabs = TRUE, caption = "Summary Table by Overall Survival Status", label = "tab:summary")
+```
+
+
+```{r, eval=FALSE}
+writeLines(latex_code, "./Paper/Tables/MetabricSummaryTable.tex")
+```
+
+

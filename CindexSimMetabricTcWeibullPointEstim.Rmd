@@ -1,0 +1,2254 @@
+---
+title: "CindexSimulationMetabric2"
+output: html_document
+date: "2025-02-27"
+---
+
+## Concordance index multiverse.
+
+
+Load libraries
+
+```{r, include=FALSE}
+# Survival metrics
+library(reticulate)
+library(arrow)
+library(caret)
+library(riskRegression)
+library(prodlim)
+library(pec)
+library(survival)
+library(rhdf5)
+library(randomForestSRC)
+library(survAUC)
+library(Hmisc)
+library(dplyr)
+# Plotting
+library(gridExtra)
+# Parallelization
+library(doFuture)
+library(future)
+library(progressr)
+library(foreach)
+library(MASS)
+library(flexsurv)
+library(furrr)
+library(pysurvivalR)
+library(survivalmodels)
+```
+
+
+```{r}
+#conda create -n py-rstudio python=3.10
+#conda activate py-rstudio
+#conda config --add channels conda-forge
+#conda config --set channel_priority strict
+#conda install numpy
+#conda install pycox
+#conda install lifelines
+#conda install numba
+#conda install furrr
+```
+
+
+```{r setup, include=FALSE}
+#Sys.unsetenv("RETICULATE_PYTHON")
+Sys.setenv(OMP_NUM_THREADS = "1")       # Limits OpenMP to 1 thread
+Sys.setenv(NUMBA_NUM_THREADS = "1")     # Limits Numba to 1 thread
+Sys.setenv(MKL_NUM_THREADS = "1")       # Limits Intel MKL to 1 thread
+Sys.setenv(KMP_WARNINGS = "0")          # Disables OpenMP warnings
+Sys.setenv(OPENBLAS_NUM_THREADS = "1")  # Limits OpenBLAS to 1 thread
+
+# #Sys.setenv(NUMBA_DISABLE_JIT = "0")  
+# library(reticulate)
+
+#use_condaenv("/opt/homebrew/Caskroom/miniforge/base/envs/py-rstudio", required=TRUE)
+#use_virtualenv("~/.virtualenvs/venv-DeSurv_python_R")
+#use_python("/opt/homebrew/Caskroom/miniforge/base/envs/venv-DeSurv3/bin/python3.9")
+#py_config()
+```
+
+### Introduction
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC7731987/
+https://cran.r-project.org/web/packages/SurvRegCensCov/vignettes/weibull.pdf
+https://onlinelibrary.wiley.com/doi/epdf/10.1002/9781118032985.ch2?saml_referrer
+https://en.wikipedia.org/wiki/Weibull_distribution#Alternative_parameterizations
+https://www.mas.ncl.ac.uk/~nmf16/teaching/mas3311/week09.pdf
+
+A parametric weibull regression model can be parametrize in various ways. Often the **Weibull accelerated failure time** is used, and can be perfomed with \pkg{survreg} in \prog{R}. The distribution is being cast into a location-scale framework following chapter 2.2 of Kalbfleisch and Prentice: 
+
+
+$$\log T = Y = \mu + \boldsymbol{\alpha}^T \mathbf{z} + \sigma W,$$
+where $\mathbf{z}$ are set of covariates, and $W$ has the extreme value distribution.
+
+However, the alternative Weibull proportional hazard parametrization is more commonly used in medicine and it can be defined in terms of the following baseline hazard: 
+
+$$h(x|\mathbf{z}) = (\gamma \lambda t^{\gamma - 1}) \exp(\boldsymbol{\beta}^T \mathbf{z}).$$
+
+where the parameters align with the Weibull AFT as follows: 
+
+\begin{align*}
+\gamma & =  1/\sigma, \\
+\lambda & = \exp(-\mu/\sigma), \\
+\boldsymbol{\beta} & = -\boldsymbol{\alpha}/\sigma,
+\end{align*}
+
+
+We can simulate times by using the following:
+Then the ratio of times for a covariate with value $z_1$ versus values $z_0$, with parameter estimate $\beta$,  can then be computed as:
+
+The $p$th percentile of the (covariate-adjusted) Weibull distribution occurs at 
+$$t_p = \left[ \frac{-\log p}{\lambda e^{\boldsymbol{\beta}^T \mathbf{z}}} \right]^{1/\gamma}.$$
+
+```{r}
+# Dataset from Deep Surv, also used in DeSurv:
+h5_test <- h5read("./Datasets/metabric_IHC4_clinical_train_test.h5", 
+                  name="test")
+
+h5_train <- h5read("./Datasets/metabric_IHC4_clinical_train_test.h5",
+                   name="train")
+
+# Make a dataset for training:
+train <- data.frame(t(h5_train$x))
+train$status <- h5_train$e
+train$time <- h5_train$t
+
+# Make a dataset for test:
+test<- data.frame(t(h5_test$x))
+test$status <- h5_test$e
+test$time <- h5_test$t
+
+# Order
+test <- test[order(test$time, -test$status),]
+train <- train[order(train$time, -train$status),]
+test$time <- test$time + 1e-8
+train$time <- train$time + 1e-8
+
+mb <- rbind(train, test) # for crossvalidation settings
+```
+
+```{r}
+source("./CindexHelperFunctions.R")
+```
+
+```{r}
+# censoring times
+survreg_model_c <- survreg(Surv(mb[mb$status == 0,]$time) ~ 1, dist="weibull")
+
+# survival times
+survreg_model <- survreg(Surv(time, status) ~ X1 + X2 + X3 + 
+                                   X4 + X5 + X6 + X7 + X8 + X9, 
+                                data = mb[mb$status == 1,], dist="weibull")
+```
+
+Generate increasing censoring in datasets
+
+```{r, eval=FALSE}
+# Generate data with different censoring levels
+#factors <- c(1,3,5,7,9,11,13)
+factors <- c(0, 0.5, 1.5, 3, 7)
+
+datasets <- vector("list", length(factors))  
+# Loop through each censoring factor and generate datasets
+for (i in seq_along(factors)) {
+  for (j in seq_len(10)) {
+    seed = sample(1:1e6, 1)
+
+    # Run the function with different lambda_c_factor values
+    datasets[[i]][[j]] <- generate_modified_weibull_times(
+      survreg_model,
+      survreg_model_c, 
+      covariates = mb[, c("X1", "X2", "X3", "X4", 
+                          "X5","X6", "X7", "X8", "X9")],
+      lambda_c_factor = factors[[i]], 
+      admin_censoring_times = NULL,
+      seed = seed # seed
+    )
+    attr(datasets[[i]][[j]], "seed") <- seed
+    attr(datasets[[i]][[j]], "lambda") <- factors[[i]]
+    attr(datasets[[i]][[j]], "cp") <- attr(datasets[[i]][[j]], "censoring_percentage")
+    
+  }  
+}
+
+
+```
+
+```{r, eval=FALSE}
+
+# Save datasets along with attributes in a structured list
+structured_datasets <- list(
+  data = datasets,  # Store the datasets
+  attributes = lapply(datasets, function(lambda_list) {
+    lapply(lambda_list, function(dataset) {
+      attributes(dataset)  # Extract attributes of each dataset
+    })
+  })
+)
+
+# Save the structured list as RDS
+#saveRDS(structured_datasets, "./Datasets/Synthetic_datasets/10d_synthetic_WT_WTc.rds")
+
+```
+```{r}
+
+# Load the synthetic datasets and restore attributes
+#datasets <- load_synthetic_datasets("./Datasets/Synthetic_datasets/50_dat_1000_synthetic_WT_WTc.rds")
+
+# Check if attributes are retained
+#attributes(datasets[[1]][[1]])  # Should return "seed", "lambda", "cp"
+
+datasets <- load_synthetic_datasets("./Datasets/Synthetic_datasets/10d_synthetic_WT_WTc.rds")
+
+```
+
+```{r}
+v <- c()
+for (d in seq(1, datasets_per_lambda)) {
+  dataset <- datasets[[4]][[d]] 
+  n <- length(dataset[["status"]])
+  c <- sum(dataset[["status"]] == 0)
+  p <- c/n * 100
+  v <- append(p, v)
+}
+mean(v)
+#table(datasets[[5]][[3]][["status"]]) * 100 / length(datasets[[5]][[1]][["status"]])
+```
+
+
+#### CROSSVALIDATION 
+
+Only with Coph
+
+```{r, eval=FALSE}
+
+set.seed(123)
+# We could keep the same folds and indices since the dataframes are the same
+# Number of folds
+K <- 5  
+n <- nrow(datasets[[1]][[1]])  
+
+# List of numeric column for standarization
+numeric_cols <- c("X1", "X2", "X3", "X4", "X9")
+
+# Shuffle and create folds
+indices <- sample(seq_len(n))
+folds <- cut(indices, breaks = K, labels = FALSE)
+
+stacked_predictions <- list()
+# Loop through datasets
+for (i in seq_along(datasets)){
+  lambda_list <- list()
+  
+  for (j in seq_along(datasets[[i]])) {
+    # Extract dataset
+    dat <- data.frame(datasets[[i]][[j]])
+    attributes(dat) <- attributes(datasets[[i]][[j]])
+    
+    # Interesting intervals for prediction
+    mb_t_max <- round(max(dat$observed_time))
+    ts_scaled <- seq(0, mb_t_max, 1)
+    fold_list <- list()
+    
+    for (k in seq_len(K)) {
+      # Define test and training indices
+      mb_test_idx  <- which(folds == k)
+      mb_train_idx <- setdiff(seq_len(n), mb_test_idx)
+      
+      # Subset the dataset
+      mb_train <- dat[mb_train_idx, ]
+      mb_test  <- dat[mb_test_idx, ]
+      
+      #t_train_max <- max(mb_train$observed_time)
+  
+      # Scale continuous 
+      means <- sapply(mb_train[, numeric_cols], mean)
+      sds   <- sapply(mb_train[, numeric_cols], sd)
+    
+      mb_train[, numeric_cols] <- scale(mb_train[, numeric_cols],
+                                        center = means, scale = sds)
+      mb_test[, numeric_cols]  <- scale(mb_test[, numeric_cols],
+                                        center = means, scale = sds)
+    
+      #t_train_max <- max(mb_train$time)
+      #mb_train$observed_time <- mb_train$observed_time / t_train_max
+      #mb_test$observed_time <- mb_test$observed_time / t_train_max
+      
+      # Extract only the covariates used for predictions
+      test_covariates <- mb_test[, c("X1", "X2", "X3", "X4",
+                                     "X5", "X6", "X7", "X8", "X9")]
+      # intervals for prediction scaled
+      #approx_seq <- ts_scaled / t_train_max
+      # Fit models
+      cat("Dataset:", i, ".", j, '\n')
+      cat("Fold:", k, '\n')
+      #cat("tmax:", t_train_max, "\n")
+      cat('Train set dimensions:', dim(mb_train), '\n')
+      cat('Train set event:', mean(mb_train$status == 1)*100, '\n')
+      cat('Train set censoring:', mean(mb_train$status == 0)*100, '\n')
+      cat('Test set dimensions:', dim(mb_test), '\n')
+      cat('Train set event:', mean(mb_test$status == 1)*100, '\n')
+      cat('Test set censoring:', mean(mb_test$status == 0)*100, '\n')
+      cat('\n')
+      
+      # 2) Predict risk Cox PH
+      # Fit with cox ph
+      cox_ph <- survival::coxph(Surv(observed_time, status) ~ X1 + X2 + 
+                                  X3 + X4 + X5 + X6 + 
+                                  X7 + X8 + X9, 
+                                   data = mb_train)
+      # Predict survival object
+      sf <- survfit(cox_ph, newdata = mb_test)
+      surv_cox <- t(sf$surv)
+      time_grid <- sf$time #* t_train_max
+      #Interpolate
+      surv_cox_int <- apply(surv_cox, 1, function(s){
+         approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
+      })
+      
+      surv_cox_int <- t(surv_cox_int)
+      rownames(surv_cox_int) <- rownames(mb_test)
+      colnames(surv_cox_int)  <- ts_scaled
+      # Calculate expected mortality
+      cox_exp_mort <- rowSums(-log(pmax(surv_cox_int, 1e-10)))
+      
+      fold_results <- data.frame(dataset = i, 
+                                 version = j,
+                                 cv_fold = k,
+                             patients_ids = rownames(mb_test), 
+                             test_time = mb_test$observed_time, ### observed_time now!
+                             test_status = mb_test$status,
+                             ExpMort.CoxPH = cox_exp_mort,
+                             CoxPH = as.data.frame(surv_cox_int),
+                             lambda = attributes(dat)$lambda, 
+                             cp = attributes(dat)$cp,
+                             seed = attributes(dat)$seed,
+                             covariates = test_covariates)
+      # Append fold results to the list
+      fold_list[[k]] <- fold_results
+    
+    }
+    stacked <- do.call(rbind, fold_list)
+
+    # Save to final list with informative name
+    lambda_list[[j]] <- stacked
+  }
+  
+  stacked_predictions[[i]] <- lambda_list
+}
+#saveRDS(stacked_predictions, "./Datasets/Synthetic_datasets/50_datasets_WT_WTc_stacked_predictions.rds" )
+# Combine all folds into a single dataframe
+#stacked_predictions <- do.call(rbind, all_predictions)
+#saveRDS(stacked_predictions, "./Datasets/Synthetic_datasets/50_datasets_WT_WTc_stacked_predictions.rds" )
+#saveRDS(stacked_predictions, "./Datasets/Synthetic_datasets/50_dat_1000_synthetic_WT_WTc_stacked_predictions.rds" )
+
+#saveRDS(all_predictions, "./Datasets/Synthetic_datasets/10_datasets_synthetic_WT_WTc.rds" )
+
+```
+
+```{r}
+stacked_predictions <- readRDS("./Datasets/Synthetic_datasets/10d_synthetic_WT_WTc.rds" )
+
+```
+
+
+```{r}
+#tail(stacked_predictions)
+```
+
+```{r}
+# approx the length of stacked predictions.
+# 50 datasets x 7 lambdas x 5 folds x ~381 predictions (on test data)
+```
+
+#### TEST
+
+
+```{r}
+set.seed(123)
+
+subset_stacked <- stacked_predictions[[1]][[1]]
+
+# Boostrap each dataset 
+n_bootstraps <- 100
+# Set the size, which is the same for each dataset
+dataset_size <- 1000 #Since each dataset has the same number of rows
+# Keep the same resample indices across datasets to make it comparable
+resample_indices <- replicate(n_bootstraps, 
+                              sample(seq_len(dataset_size), 
+                                     size = dataset_size, replace = TRUE), 
+                              simplify = FALSE)
+```
+
+
+```{r}
+test <- bootstrap.metric(metrics.wrapper, 
+                                dataset=list(
+                                   predicted = 1 - subset_stacked$CoxPH.4,
+                                   censoring = subset_stacked$test_status, 
+                                   time = subset_stacked$test_time), 
+                                implementation = list("sksurv.censored"), 
+                                eval.times = NULL,
+                                resample_indices = resample_indices)
+```
+
+#### BOOTSTRAP:
+
+```{r}
+#datasets_per_lambda <- unique(stacked_predictions$version)
+datasets_per_lambda <- 10
+```
+
+```{r}
+#lambdas <- unique(stacked_predictions$lambda)
+lambdas <- length(factors)
+```
+
+```{r}
+#prediction_columns <- colnames(stacked_predictions[,c(1:4)])
+```
+
+All datasets are boostraped with a different resample indexes. 
+
+
+```{r}
+#mean(stacked_predictions[(stacked_predictions$lambda == 7),]$time)
+```
+
+
+```{r}
+set.seed(123)
+## let's try with 1 only 
+subset <- stacked_predictions[[3]]
+n_bootstraps <- 100
+# select columns
+selected_exps <- "ExpMort.CoxPH"
+# each dataset in subset of lambda 
+results_exp <- vector("list", length = datasets_per_lambda)
+#results_risk <- vector("list", length = datasets_per_lambda)
+results_surv <- vector("list", length = datasets_per_lambda)
+results_risk_max <- vector("list", length = datasets_per_lambda)
+cps <- list()
+
+results_per_lambda <- vector("list", length = length(factors))
+
+for (l in seq_along(stacked_predictions)) { 
+  cat("Censoring set up ", l, "\n")
+  subset <- stacked_predictions[[l]]
+  for (dataset in seq_along(subset)) {
+    # Get the size of dataset
+    dataset_size <- nrow(subset[[dataset]])
+    # Get lambda 
+    lambda = unique(subset[[dataset]]$lambda)
+    # Get censoring-percentage
+    cps[[dataset]] = unique(subset[[dataset]]$cp)
+    # Create bootstrap samples
+    resample_indices <- replicate(n_bootstraps, 
+                                    sample(subset[[dataset]]$patients_ids, 
+                                           size = dataset_size, replace = TRUE), 
+                                    simplify = FALSE)
+    # When eval is at max uncensored time
+    eval.t <- round(max(subset[[dataset]]$test_time[subset[[dataset]]$test_status == 1]))
+  
+    # Create empty lists
+    subset_risk <- list()
+    subset_expm <- list()
+    subset_surv <- list()
+    # Boostrapping
+    for (r in seq_along(resample_indices)){
+      subset_expm[[r]] <- get_model_preds2(stacked_predictions = subset[[dataset]], 
+                   model_names = "all",
+                   input_type = "ExpectedMortality",
+                   bootstrap_patient_ids = resample_indices[[r]])
+      subset_risk[[r]] <- get_model_preds2(stacked_predictions = subset[[dataset]], 
+                 model_names = "all",
+                 input_type = "RiskAtT",
+                 specific_time = c(round(quantile(ts_scaled, 0.25)), 
+                                    round(median(ts_scaled)), 
+                                    round(quantile(ts_scaled, 0.75))),
+                 bootstrap_patient_ids = resample_indices[[r]])
+      subset_surv[[r]] <- get_model_preds2(stacked_predictions = subset[[dataset]], 
+                  model_names = "all",
+                  input_type = "Distribution",
+                  bootstrap_patient_ids = resample_indices[[r]])
+    }
+    for (exps in selected_exps){
+      cat("Boostrapping for lambda ", lambda, ", dataset ", dataset, "and column ", exps, "\n")
+      results_exp[[dataset]][[exps]] <-  bootstrap.metric.parallel(metrics.wrapper,
+                                    dataset=list(
+                                       predicted = exps,
+                                       censoring = "test_status",
+                                       time = "test_time"),
+                                    implementation = list("Hmisc::rcorr.cens",
+                                                          "pysurvival",
+                                                          "survC1::Est.Cval", 
+                                                          "pec::cindex", 
+                                                          "SurvMetrics::Cindex", 
+                                                          "lifelines", 
+                                                          "sksurv.censored", 
+                                                          "survival.n", 
+                                                          "survival.n/G2"),
+                                    eval.times = eval.t, 
+                                    sampled_data = subset_expm)
+      
+    }
+    selected_models <- colnames(subset_risk[[1]])[4:length(colnames(subset_risk[[1]]))]
+
+    for (model in selected_models) {
+     t <- as.numeric(sub(".*\\.", "", model))
+     cat("Calculating bootstrap at eval.time = ", eval.t, "when t = ", t ,"for Model = ", model, "\n")
+     results_risk_max[[dataset]][[model]] <- bootstrap.metric.parallel(metrics.wrapper,
+                                    dataset=list(
+                                       predicted = model,
+                                       censoring = "test_status",
+                                       time = "test_time"),
+                                    implementation = list("Hmisc::rcorr.cens",
+                                                          "pysurvival",
+                                                          "survC1::Est.Cval", 
+                                                          "pec::cindex", 
+                                                          "SurvMetrics::Cindex", 
+                                                          "lifelines", 
+                                                          "sksurv.censored", 
+                                                          "survival.n", 
+                                                          "survival.n/G2"),
+                                    eval.times = eval.t,
+                                    sampled_data = subset_risk)
+  
+    }
+    model_names <- unique(sub("\\..*", "", grep("^[A-Za-z]+\\.\\d+$",
+                                              colnames(subset_surv[[1]]), value = TRUE)))
+    for (model in model_names) {
+      # Antolinis
+      cat("Calculating bootstrap for Distribution for Model = ", model, "\n")
+      results_surv[[dataset]][[model]] <-  bootstrap.metric(metrics.wrapper,
+                                      dataset=list(
+                                         predicted = model,
+                                         censoring = "test_status",
+                                         time = "test_time"),
+                                      implementation = list("pycox.Ant", "pycox.Adj.Ant"),
+                                      sampled_data = subset_surv)
+    }
+  }
+  results_per_lambda[[l]] <- list(results_risk_max, results_exp, results_surv)
+}
+
+```
+
+
+
+```{r}
+### save objects 
+#saveRDS(results_surv, "./Results/SyntheticObjects/results_survW5fold_123.rds")
+#saveRDS(results_risk_max, "./Results/SyntheticObjects/results_risk_maxW5fold_123.rds")
+#saveRDS(results_risk, "./Results/SyntheticObjects/results_riskW5fold_123.rds")
+#saveRDS(results_exp, "./Results/SyntheticObjects/results_expW5fold_123.rds")
+
+#saveRDS(results_per_lambda, "./Results/SyntheticObjects/10d_c_ind_results_TcW_123.rds")
+results_per_lambda <- readRDS("./Results/SyntheticObjects/10d_c_ind_results_TcW_123.rds")
+```
+
+
+
+
+#### Plot
+
+```{r}
+all_results <- list()
+expm_entries_all <- list()
+exp_df <- list()
+risk_max_entries_all <- list()
+risk_max_df <- list()
+surv_entries <- list()
+surv_df <- list()
+
+for (l in seq_along(results_per_lambda)) {
+  list_risk_max <- results_per_lambda[[l]][[1]]
+  list_exp <- results_per_lambda[[l]][[2]]
+  list_surv <- results_per_lambda[[l]][[3]]
+  
+  lambda <- factors[[l]]
+
+  expm_entries_all[[l]] <- lapply(seq_along(list_exp), function(dataset_idx) {
+    dataset_results <- list_exp[[dataset_idx]]
+    
+    lapply(names(dataset_results), function(name) {
+      if (name == "batch.metrics") return(NULL)
+      result <- dataset_results[[name]]
+      model <- name
+      metrics <- names(result$mean)
+
+      entries <- lapply(seq_along(metrics), function(i) {
+        metric_name <- metrics[i]
+        mean_c <- result$mean[i]
+        ci <- result$confidence.intervals[i, ]
+        data.frame(
+          Lambda = lambda,
+          Dataset = dataset_idx,
+          Metric = metric_name,
+          Model = "CoxPH",
+          Cindex = mean_c,
+          Lower = ci[1],
+          Upper = ci[2],
+          InputType = "Exp.Mort",
+          InputType2 = "Exp.Mort",
+          stringsAsFactors = FALSE
+        )
+      })
+      do.call(rbind, entries)
+    })
+  })
+  
+  risk_max_entries_all[[l]] <- lapply(seq_along(list_risk_max), function(dataset_idx) {
+    dataset_results <- list_risk_max[[dataset_idx]]
+
+    lapply(names(dataset_results), function(name) {
+      if (name == "batch.metrics") return(NULL)
+
+      result <- dataset_results[[name]]
+      model <- sub("\\..*", "", name)
+      t <- sub(".*?\\.", "", name)
+      tau <- result$eval.times
+
+      metrics <- names(result$mean)
+      
+      entries <- lapply(seq_along(metrics), function(i) {
+        metric_name <- metrics[i]
+        mean_c <- result$mean[i]
+        ci <- result$confidence.intervals[i, ]
+
+        data.frame(
+          Lambda = lambda,
+          Dataset = dataset_idx,
+          Metric = metric_name,
+          Model = "CoxPH",
+          Cindex = mean_c,
+          Lower = ci[1],
+          Upper = ci[2],
+          InputType =  paste0("Risk(t=", t ,", tau=", tau,")"),
+          InputType2 = paste0("Risk(t=", t ,")"), 
+          stringsAsFactors = FALSE
+        )
+      })
+      do.call(rbind, entries)
+    })
+  })
+  
+  surv_entries[[l]] <- lapply(seq_along(list_surv), function(dataset_idx) {
+    dataset_results <- list_surv[[dataset_idx]]
+    
+    lapply(names(dataset_results), function(name) {
+      if (name == "batch.metrics") return(NULL)
+        result <- dataset_results[[name]]
+        model <- name
+      
+        metrics <- names(result$mean)
+      
+        entries <- lapply(1:2, function(i) {
+          metric_name <- metrics[i]
+          mean_c <- result$mean[i]
+          ci <- result$confidence.intervals[i, ]
+          
+          data.frame(
+            Lambda = lambda, 
+            Dataset = dataset_idx,
+            Metric = metric_name,
+            Model = "CoxPH",
+            Cindex = mean_c,
+            Lower = ci[1],
+            Upper = ci[2],
+            InputType = "Distrib.",
+            InputType2 = "Distrib.", 
+            stringsAsFactors = FALSE
+          )
+        })
+        do.call(rbind, entries)
+    })
+  })
+
+  exp_df[[l]] <- do.call(rbind, unlist(expm_entries_all[[l]], recursive = FALSE))
+
+  risk_max_df[[l]] <- do.call(rbind, unlist(risk_max_entries_all[[l]], recursive = FALSE))
+
+  surv_df[[l]] <-  do.call(rbind, unlist(surv_entries[[l]], recursive = FALSE))
+  
+  all_results[[l]] <- rbind(exp_df[[l]], risk_max_df[[l]], surv_df[[l]])
+  
+}
+#exp_df <- do.call(rbind, unlist(expm_entries_all, recursive = FALSE))
+final_df <- do.call(rbind, all_results)
+
+saveRDS(final_df, "./Results/SyntheticObjects/10d_c_ind_results_processed_TcW_123.rds")
+```
+
+```{r}
+final_df <- readRDS("./Results/SyntheticObjects/10d_c_ind_results_processed_TcW_123.rds")
+```
+
+The reason is that different lambdas will have different max uncensored time... 
+
+
+```{r}
+unique(final_df$InputType)
+```
+
+
+```{r}
+unique(final_df$InputType2)
+```
+
+```{r}
+# just checking I am counting 10 daasets:
+final_df %>%
+  filter(InputType2 == "Exp.Mort") %>%
+  count(Lambda, Metric)
+```
+
+```{r}
+imp_map <- data.frame(
+  Metric = c("Hmisc::rcorr.cens", "SurvMetrics::Cindex", "lifelines", "pysurvival", 
+             "sksurv.censored", "pec::cindex", "survC1::Est.Cval", "survival.n", 
+             "survival.n/G2", "pycox.Ant", "pycox.Adj.Ant", "sksurv.ipcw"),
+  Implementation = c("Hmisc", "SurvMetrics", "lifelines", "pysurvival", "sksurv.censored",
+  "pec", "survC1", 'survival.n', 'survival.n/G2', 
+  "pycox.Ant", "pycox.Adj.Ant", "sksurv.ipcw"),
+  stringsAsFactors = FALSE
+)
+
+notation_map <- data.frame(
+  Implementation = c("pycox.Ant", "pycox.Adj.Ant", 
+             "pec", "survC1", "survival.n/G2", "sksurv.ipcw","survival.n", 
+             "Hmisc", "SurvMetrics", "lifelines", "pysurvival", 
+             "sksurv.censored"),
+  Notation = c("C td", "C td", 
+               "C tau", "C tau", "C tau", 
+               "C tau", "C tau",
+               "C", "C", "C", "C", "C"),
+  stringsAsFactors = FALSE
+)
+
+
+final_df <- merge(final_df, imp_map, by = "Metric", all.x = TRUE)
+final_df <- merge(final_df, notation_map, by = "Implementation", all.x = TRUE)
+```
+
+```{r}
+
+ggplot(final_df[final_df$InputType2 == "Exp.Mort",],  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
+  geom_violin(alpha = 0.4, color = "black") +
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
+  facet_wrap(~Metric)
+  labs(title = "Model Performance per Lambda",
+       y = "C-index",
+       x = "Lambda",
+       fill = "Input Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+ggplot(final_df[final_df$InputType2 == "Exp.Mort",],  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
+  geom_violin(alpha = 0.4, color = "black") +
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
+  labs(title = "Expected Mortality Cox PH across lambda adjustment values",
+       y = "C-index",
+       x = "Lambda",
+       fill = "Implementation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+```{r}
+ggplot(final_df,  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
+  geom_violin(alpha = 0.4, color = "black") +
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
+  facet_wrap(~InputType2)
+  labs(title = "Model Performance per Lambda",
+       y = "C-index",
+       x = "Lambda",
+       fill = "Input Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+ggplot(final_df[final_df$Lambda == 7,],  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
+  geom_violin(alpha = 0.4, color = "black") +
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
+  facet_wrap(~InputType2)
+  labs(title = "Model Performance per Lambda",
+       y = "C-index",
+       x = "Lambda",
+       fill = "Input Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+### OLD code
+
+```{r}
+library(tidyr)
+library(dplyr)
+
+# Loop over datasets
+expm_entries_all <- lapply(seq_along(results_exp), function(dataset_idx) {
+  dataset_results <- results_exp[[dataset_idx]]
+  #cp <- cps[[dataset_idx]] ?
+  
+  # Loop over models in that dataset
+  lapply(names(dataset_results), function(name) {
+    if (name == "batch.metrics") return(NULL)
+    
+    result <- dataset_results[[name]]
+    model <- name  # or strip prefix: sub("ExpMort\\.", "", name)
+    
+    metrics <- names(result$mean)
+    
+    entries <- lapply(seq_along(metrics), function(i) {
+      metric_name <- metrics[i]
+      mean_c <- result$mean[i]
+      ci <- result$confidence.intervals[i, ]
+
+      data.frame(
+        Dataset = dataset_idx,
+        Metric = metric_name,
+        Model = model,
+        Cindex = mean_c,
+        Lower = ci[1],
+        Upper = ci[2],
+        InputType = "Exp.Mort",
+        stringsAsFactors = FALSE
+      )
+    })
+    
+    do.call(rbind, entries)
+  })
+})
+
+# Flatten the list and bind rows
+expm_df_all <- do.call(rbind, unlist(expm_entries_all, recursive = FALSE))
+
+risk_max_entries_all <- lapply(seq_along(results_risk_max), function(dataset_idx) {
+  dataset_results <- results_risk_max[[dataset_idx]]
+  #cp <- cps[[dataset_idx]] ?
+  
+  # Loop over models in that dataset
+  lapply(names(dataset_results), function(name) {
+    if (name == "batch.metrics") return(NULL)
+    
+    result <- dataset_results[[name]]
+    model <- sub("\\..*", "", name)
+    t <- sub(".*?\\.", "", name)
+    tau <- result$eval.times
+    
+    metrics <- names(result$mean)
+    
+    entries <- lapply(seq_along(metrics), function(i) {
+      metric_name <- metrics[i]
+      mean_c <- result$mean[i]
+      ci <- result$confidence.intervals[i, ]
+
+      data.frame(
+        Dataset = dataset_idx,
+        Metric = metric_name,
+        Model = model,
+        Cindex = mean_c,
+        Lower = ci[1],
+        Upper = ci[2],
+        InputType =  paste0("Risk(t=", t ,", tau=", tau,")"),
+        stringsAsFactors = FALSE
+      )
+    })
+    
+    do.call(rbind, entries)
+  })
+})
+
+# Flatten the list and bind rows
+risk_max_df_all <- do.call(rbind, unlist(risk_max_entries_all, recursive = FALSE))
+
+surv_entries_all <- lapply(seq_along(results_surv), function(dataset_idx) {
+  dataset_results <- results_surv[[dataset_idx]]
+  #cp <- cps[[dataset_idx]] ?
+  
+  # Loop over models in that dataset
+  lapply(names(dataset_results), function(name) {
+    if (name == "batch.metrics") return(NULL)
+    
+    result <- dataset_results[[name]]
+    model <- name  # or strip prefix: sub("ExpMort\\.", "", name)
+    
+    metrics <- names(result$mean)
+    
+    entries <- lapply(seq_along(metrics), function(i) {
+      metric_name <- metrics[i]
+      mean_c <- result$mean[i]
+      ci <- result$confidence.intervals[i, ]
+
+      data.frame(
+        Dataset = dataset_idx,
+        Metric = metric_name,
+        Model = model,
+        Cindex = mean_c,
+        Lower = ci[1],
+        Upper = ci[2],
+        InputType = "Distrib.",
+        stringsAsFactors = FALSE
+      )
+    })
+    
+    do.call(rbind, entries)
+  })
+})
+
+# Flatten the list and bind rows
+surv_df_all <- do.call(rbind, unlist(surv_entries_all, recursive = FALSE))
+
+```
+
+
+```{r}
+ggplot(expm_df_all, aes(x = Metric, y = Cindex, fill = Metric)) +
+  geom_violin(alpha = 0.4, color = "black") +
+  geom_point(position = position_jitter(width = 0.1), size = 2) +
+  #geom_errorbar(aes(ymin = Lower, ymax = Upper),
+  #              width = 0.2,
+  #              position = position_jitter(width = 0.1)) +
+  facet_wrap(~ Model, scales = "fixed", nrow = 1) +
+  labs(
+    title = "",
+    x = "Model", y = "C-index Bootstrap mean"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+```{r, fig.height=5, fig.width=15}
+ggplot(expm_df_all, aes(x = Metric, y = Cindex, fill = Model)) +
+  geom_violin(position = position_dodge(width = 0.9), alpha = 0.4, color = "black", width = 0.8) +
+  geom_point(position = position_dodge(width = 0.9), size = 2, color = "black") +
+  #geom_errorbar(aes(ymin = Lower, ymax = Upper),
+  #              position = position_dodge(width = 0.9), width = 0.2) +
+  labs(
+    title = "",
+    x = "Metric", y = "C-index Bootstrap Mean"
+  ) +
+  theme_minimal() +
+  scale_y_continuous(n.breaks = 11) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+```
+
+```{r}
+ggplot(surv_df_all, aes(x = Metric, y = Cindex, fill = Model)) +
+  geom_violin(position = position_dodge(width = 0.9), alpha = 0.4, color = "black", width = 0.8) +
+  geom_point(position = position_dodge(width = 0.9), size = 2, color = "black") +
+  #geom_errorbar(aes(ymin = Lower, ymax = Upper),
+  #              position = position_dodge(width = 0.9), width = 0.2) +
+  labs(
+    title = "",
+    x = "Metric", y = "C-index Bootstrap Mean"
+  ) +
+  theme_minimal() +
+  scale_y_continuous(n.breaks = 11) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+```{r}
+ggplot(risk_df_all, aes(x = Metric, y = Cindex, fill = Model)) +
+  geom_violin(position = position_dodge(width = 0.9), alpha = 0.4, color = "black", width = 0.8) +
+  #geom_point(position = position_dodge(width = 0.9), size = 2, color = "black") +
+  #geom_errorbar(aes(ymin = Lower, ymax = Upper),
+  #              position = position_dodge(width = 0.9), width = 0.2) +
+  facet_grid(~InputType) +
+  labs(
+    title = "",
+    x = "Metric", y = "C-index Bootstrap Mean"
+  ) +
+  theme_minimal() +
+  scale_y_continuous(n.breaks = 11) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+```{r}
+ggplot(risk_max_df_all, aes(x = Metric, y = Cindex, fill = Model)) +
+  #geom_violin(position = position_dodge(width = 0.9), alpha = 0.4, color = "black", width = 0.8) +
+  geom_point(position = position_dodge(width = 0.9), size = 2, color = "black") +
+  #geom_errorbar(aes(ymin = Lower, ymax = Upper),
+  #              position = position_dodge(width = 0.9), width = 0.2) +
+  facet_grid(~factor(InputType) )+
+  labs(
+    title = "",
+    x = "Metric", y = "C-index Bootstrap Mean"
+  ) +
+  theme_minimal() +
+  scale_y_continuous(n.breaks = 11) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+Plot
+
+```{r}
+
+# Loop through lambdas
+for (lambda in seq_along(lambdas)) {
+  
+  # Get the boostsap result
+  bootstrap_lambda <- bootstrap_object[[lambda]]
+  # Get the number of datasets for each lambda
+  num_datasets <- 1:length(bootstrap_lambda)
+  # Get the exact value of lambda
+  lambda_value <- lambdas[[lambda]]
+  
+  # Retrieve the censoring range per synthetic dataset
+  cp_lambda <- stacked_predictions[stacked_predictions$lambda==lambda_value,]$cp
+  min_cp <- min(cp_lambda) # Min value
+  max_cp <- max(cp_lambda) # Max value
+  
+
+# Generate dataframe for ggplot
+  metrics_data <- do.call(rbind, lapply(num_datasets, function(d) {
+    
+    bootstrap_d <- bootstrap_lambda[[d]]
+    
+    # Loop over pred_columns to extract relevant metrics
+    do.call(rbind, lapply(names(bootstrap_d), function(pred_column) {
+      pred_results <- bootstrap_d[[pred_column]]
+      
+      data.frame(
+        Dataset = d, 
+        Metric = names(pred_results$mean),
+        Mean = as.numeric(pred_results$mean), 
+        Lower = as.numeric(pred_results$confidence.intervals[, 1]), 
+        Upper = as.numeric(pred_results$confidence.intervals[, 2]),
+        PredColumn = pred_column # Store which prediction column was used
+      )
+    }))
+  }))
+  
+  
+  p <- ggplot(metrics_data, aes(x = Metric, y = Mean, fill = Metric)) +
+  geom_boxplot(alpha = 0.7) + 
+  geom_point(position = position_jitter(width = 0.2), alpha = 0.5, size = 1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray", size = 0.8) +
+  facet_wrap(~ PredColumn, scales = "free_y") +  # Separate plots for each pred_column
+  theme_minimal() +
+  labs(
+    title = paste0("Lambda=", lambda_value, 
+                   " (Censoring: ", round(min_cp, 2), 
+                   "-", round(max_cp, 2), "%)"),
+    x = "Implementation",
+    y = "Mean C-Index",
+    fill = "Implementation"
+  ) +
+    
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylim(0.45, 0.7)
+  # Plot
+  # p <- ggplot(metrics_data, aes(x = Dataset, 
+  #                               y = Mean, 
+  #                               color = Metric, 
+  #                               group = interaction(Metric, PredColumn), 
+  #                               linetype = PredColumn)) + # Different line type for each pred_column
+  #   geom_line(size = 1) + 
+  #   geom_point(size = 3) +  
+  #   geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2) +  
+  #   geom_hline(yintercept = 0.5, 
+  #              linetype = "dashed", 
+  #              color = "gray", 
+  #              size = 0.8) +  
+  #   theme_minimal() +
+  #   scale_x_continuous(breaks = as.numeric(num_datasets)) +
+  #   labs(
+  #     title = paste0("Lambda=", lambda_value, 
+  #                    " (Censoring: ", round(min_cp, 2), 
+  #                    "-", round(max_cp, 2), "%)"),
+  #     x = "Dataset",
+  #     y = "Mean C-Index",
+  #     color = "Implementation",
+  #     linetype = "Prediction Column"
+  #   ) +
+  #   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  #   ylim(0.5, 0.7)
+
+  print(p)
+}
+```
+
+```{r}
+# Loop through lambdas
+for (lambda in seq_along(lambdas)) {
+  
+  # Get the boostsap result
+  bootstrap_lambda <- bootstrap_object[[lambda]]
+  # Get the number of datasets for each lambda
+  num_datasets <- 1:length(bootstrap_lambda)
+  # Get the exact value of lambda
+  lambda_value <- lambdas[[lambda]]
+  
+  # Retrieve the censoring range per synthetic dataset
+  cp_lambda <- stacked_predictions[stacked_predictions$lambda==lambda_value,]$cp
+  min_cp <- min(cp_lambda) # Min value
+  max_cp <- max(cp_lambda) # Max value
+  
+
+# Generate dataframe for ggplot
+  metrics_data <- do.call(rbind, lapply(num_datasets, function(d) {
+    
+    bootstrap_d <- bootstrap_lambda[[d]]
+    
+    # Loop over pred_columns to extract relevant metrics
+    do.call(rbind, lapply(names(bootstrap_d), function(pred_column) {
+      pred_results <- bootstrap_d[[pred_column]]
+      
+      data.frame(
+        Dataset = d, 
+        Metric = names(pred_results$mean),
+        Mean = as.numeric(pred_results$mean), 
+        Lower = as.numeric(pred_results$confidence.intervals[, 1]), 
+        Upper = as.numeric(pred_results$confidence.intervals[, 2]),
+        PredColumn = pred_column # Store which prediction column was used
+      )
+    }))
+  }))
+  p <- ggplot(metrics_data, aes(x = PredColumn, y = Mean, fill = PredColumn)) +
+  geom_boxplot(alpha = 0.7) + 
+  geom_point(position = position_jitter(width = 0.2), alpha = 0.5, size = 1) +
+  facet_wrap(~ Metric, scales = "free_y") +  # Separate plots by implementation
+  theme_minimal() +
+  labs(
+    title = paste0("Lambda=", lambda_value, 
+                   " (Censoring: ", round(min_cp, 2), 
+                   "-", round(max_cp, 2), "%)"),
+    x = "Prediction Model",
+    y = "Mean C-Index",
+    fill = "Prediction Model"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylim(0.45, 0.7)
+
+  print(p)
+}
+```
+
+### NO BOOTSTRAP - Point estimates:
+
+Here I am using the results from the cross validation: stacked predictions. 
+
+Per each lambda I have 50 datasets generated with different seeds, per each dataset I have all the predictions. The c-index point estimate is calculated with each of the implementations and can be done in parallel. 
+
+
+```{r}
+datasets_per_lambda <- unique(stacked_predictions$version)
+```
+
+```{r}
+lambdas <- unique(stacked_predictions$lambda)
+```
+
+```{r}
+prediction_columns <- colnames(stacked_predictions[,c(1:4)])
+```
+
+
+Without parallelization
+
+```{r, eval=FALSE}
+lambdas = 7
+results <- vector("list", length(lambdas)) 
+for (lambda in seq_along(lambdas)) {
+  # Get the exact value of lambda
+  lambda_value <- lambdas[[lambda]]
+  subset_lambda <- stacked_predictions[stacked_predictions$lambda==lambda_value,]
+  # Retrieve the censoring range per synthetic dataset
+  cp_lambda <- subset_lambda$cp
+  min_cp <- min(cp_lambda) # Min value
+  max_cp <- max(cp_lambda) # Max value
+  
+  results[[lambda]] <- vector("list", length(unique(subset_lambda$version)))
+  
+  for (version in unique(subset_lambda$version)) {
+    
+    for (pred_column in prediction_columns) {
+        # Print dataset and lambda
+        cat("Dataset number", version, " for lambda 
+            factor = ", lambdas[[lambda]], ", colum = ", 
+            pred_column, "\n")
+        data <- subset_lambda[(subset_lambda$version == version), 
+                              append(prediction_columns, c("time", "status"))]
+      
+        ## Call function with proper arguments
+        results[[lambda]][[version]][[pred_column]] <- 
+          metrics.wrapper(
+            predicted = subset_lambda[[pred_column]],
+            censoring = subset_lambda$status,
+            time = subset_lambda$time,
+        implementation = list("Hmisc::rcorr.cens"),
+                                   eval.times = NULL,
+                              sksurv_train_time = mb_train$time,
+                              sksurv_train_status = mb_train$status,
+                              sksurv_tied_tol = 1e-8)
+      
+    
+    }
+  }
+}
+  
+
+```
+
+With paralellization over the 50 datasets:
+
+
+```{r}
+
+registerDoFuture()
+plan(multisession, workers = parallel::detectCores() - 1)
+
+handlers("cli") 
+
+parallel_func <- function(lambdas, stacked_predictions, 
+                          prediction_columns, mb_train) {
+  
+  results <- vector("list", length(lambdas))
+  names(results) <- as.character(lambdas)
+
+  for (lambda in seq_along(lambdas)) {
+    
+    lambda_value <- lambdas[[lambda]]
+    subset_lambda <- stacked_predictions[stacked_predictions$lambda == lambda_value,]
+
+    cp_lambda <- subset_lambda$cp
+    min_cp <- min(cp_lambda)  
+    max_cp <- max(cp_lambda)
+
+    dataset_versions <- unique(subset_lambda$version) 
+
+    results[[as.character(lambda_value)]] <- vector("list", length(dataset_versions))
+    names(results[[as.character(lambda_value)]]) <- dataset_versions
+
+    with_progress({
+      pred_results <- vector("list", length(prediction_columns))
+      names(pred_results) <- prediction_columns  
+        
+      pro_bar <- progressor(along = dataset_versions) 
+
+      results[[lambda]]<- 
+        foreach(version = dataset_versions,
+                .options.future = list(seed = TRUE)) %dofuture% {
+        
+        pred_results <- vector("list", length(prediction_columns))
+        names(pred_results) <- prediction_columns 
+
+        pro_bar(sprintf("Processing version %d/%d for lambda %s", 
+                        version, length(dataset_versions), lambda_value))
+        
+        for (pred_column in prediction_columns) {
+          cat("Dataset number", version, " for lambda factor = ", lambda_value, 
+              ", column = ", pred_column, "\n")
+
+          data <- subset_lambda[(subset_lambda$version == version), 
+                                append(prediction_columns, c("time", "status"))]
+
+          pred_results[[pred_column]] <- metrics.wrapper(
+            predicted = data[[pred_column]],
+            censoring = data$status,
+            time = data$time,
+            implementation = list("Hmisc::rcorr.cens",
+                                  "survC1::Est.Cval",
+                                  "pec::cindex",
+                                  "pysurvival",
+                                  "sksurvR.ipcw"),
+            eval.times = NULL,
+            sksurv_train_time = mb_train$time,
+            sksurv_train_status = mb_train$status,
+            sksurv_tied_tol = 1e-8
+          )
+        }
+
+        return(pred_results)
+      }
+    })
+  }
+  
+  return(results) 
+}
+
+# Call the parallel function & store results
+results <- parallel_func(c(7, 13), stacked_predictions, prediction_columns, mb_train)
+
+# Reset plan to sequential to free up cores
+plan(sequential)
+
+# Stop lingering workers
+future:::ClusterRegistry("stop")
+
+```
+
+
+```{r}
+#saveRDS(results, "./Results/50_dat_1000_synthetic_WT_WTc_point_estimate_cindex.rds")
+results <- readRDS("./Results/50_dat_1000_synthetic_WT_WTc_point_estimate_cindex.rds")
+
+```
+
+```{r}
+
+implementations = list("Hmisc::rcorr.cens",
+                                   "survC1::Est.Cval",
+                                   "pec::cindex",
+                                   "pysurvival",
+                                   "sksurvR.ipcw")
+# Define which elements of results to process
+lambdas <- c("7", "13")
+
+# Initialize list to store dataframes
+results_df <- list()
+
+for (lambda in lambdas) {
+  data_list <- results[[lambda]]
+  df_list <- list()
+  row_idx <- 1
+  
+  for (dataset_idx in seq_along(data_list)) {
+    dataset <- data_list[[dataset_idx]]
+    
+    for (pred_type in names(dataset)) {
+      pred_data <- dataset[[pred_type]]  # List of implementations and their values
+      implems <- names(pred_data)
+      values <- as.numeric(unlist(pred_data))
+      n <- length(values)
+      
+      df_list[[row_idx]] <- data.frame(
+        dataset_id = rep(dataset_idx, n),
+        prediction_type = rep(pred_type, n),
+        implementation = implems,
+        value = values,
+        stringsAsFactors = FALSE
+      )
+      row_idx <- row_idx + 1
+    }
+  }
+  
+  # Combine the inner data frame and filter by implementations
+  df <- do.call(rbind, df_list)
+  df <- df[df$implementation %in% implementations, ]
+  
+  # Store in the final list using the result key
+  results_df[[lambda]] <- df
+}
+```
+
+
+```{r}
+# Plot with facet_grid
+for (lambda in lambdas) {
+ p <- ggplot(results_df[[lambda]], 
+         aes(x = factor(dataset_id), 
+             y = value, color = implementation)) +
+    geom_point() +
+    facet_grid(. ~ prediction_type, labeller = labeller(prediction_type = c(
+  "cox_predictions" = "Cox PH",
+  "rf_predictions" = "RSF",
+  "deepsurv_predictions" = "DeepSurv",
+  "deephit_predictions" = "DeepHit"))) +
+    theme_minimal() +
+    labs(
+      x = "Dataset ID",
+      y = "Cindex Value",
+      title = paste0("C-index point estimates across models, lambda=", lambda)
+    ) +
+    theme(axis.text.x = element_blank())  # Hide x-axis text if too many datasets
+ print(p)
+}
+```
+
+For each combination of dataset_id and implementation, we can compute the descending rank of value where higher values when lower rank (the highest c-index gets the rank one) with ties.method = "min".
+
+
+We get an implementation i.e Hmisc which will rank from 0-4 each of the 4 models we have. Each implementation will do the same and we have to check if these ranks between implementations are consistent. If they are consistent, then each implementation will select the optimal model.
+
+```{r}
+library(dplyr)
+
+# Compute rankings per dataset and prediction type
+df_ranked <- df %>%
+  group_by(implementation, dataset_id) %>%
+  mutate(rank = rank(-value, ties.method = "min")) 
+
+# Heatmap of ranks per dataset
+ggplot(df_ranked, aes(x = factor(dataset_id), y = implementation, fill = rank)) +
+  geom_tile() +
+  facet_grid(. ~ prediction_type, labeller = labeller(prediction_type = c(
+  "cox_predictions" = "Cox Proportional Hazards",
+  "rf_predictions" = "Random Survival Forest",
+  "deepsurv_predictions" = "DeepSurv",
+  "deephit_predictions" = "DeepHit"))) +
+  scale_fill_viridis_c(option = "magma", direction = -1) + 
+  theme_minimal() +
+  labs(
+    x = "Dataset ID",
+    y = "Implementation",
+    title = "Ranking of Implementations by Prediction Type",
+    fill = "Rank"
+  ) +
+  theme(axis.text.x = element_blank())
+
+```
+
+```{r}
+df_rank_correlation <- df_ranked %>%
+   dplyr::select(dataset_id, prediction_type, implementation, rank) %>%
+   pivot_wider(names_from = prediction_type, values_from = rank)
+
+head(df_rank_correlation)
+```
+
+
+Correlation between implementations. Checking if acrross different models we get correlation between implementations with kendall tau. 
+
+
+
+```{r}
+df_rank_correlation <- df_ranked %>%
+   dplyr::select(dataset_id, prediction_type, implementation, rank) %>%
+   pivot_wider(names_from = implementation, values_from = rank)
+
+ 
+df_rank_correlation <- df_rank_correlation[, !colnames(df_rank_correlation) 
+                                            %in% c("dataset_id", "prediction_type")]
+correlation_matrix <- cor(df_rank_correlation, 
+                           method = "kendall", 
+                           use = "pairwise.complete.obs")
+  
+print(correlation_matrix)  
+
+```
+```{r}
+friedman.test(as.matrix(df_rank_correlation))
+```
+```{r}
+for (i in implementation) {
+  for (j in implementation) {
+    if (i != j) {
+      test <- wilcox.test(as.matrix(df_rank_correlation)[,i],
+                  as.matrix(df_rank_correlation)[,j],
+                  paired = TRUE,
+                  alternative = "two.sided")$p.value
+      cat("Implementations: ", i, "and ", j, " p-value: ", test, "\n")
+    }
+  }
+}
+```
+
+
+
+
+
+
+```{r}
+library(tidyverse)
+
+# Plot rankings using a line plot (parallel coordinates)
+ggplot(df_ranked, aes(x = prediction_type, y = rank, group = implementation, color = implementation)) +
+  geom_line(size = 1) +   # Connect ranks per implementation
+  geom_point(size = 2) +  # Highlight points per implementation
+  scale_y_reverse() +     # Lower rank = better, so reverse Y-axis
+  theme_minimal() +
+  labs(
+    x = "Prediction Type",
+    y = "Rank (Lower is Better)",
+    title = "Ranking of Implementations Across Prediction Types",
+    color = "Implementation"
+  ) +
+  facet_wrap(~ dataset_id, ncol = 5)  # Facet by dataset
+
+```
+
+
+
+CORRECT PREDICTIONS:
+
+
+### HOLD OUT AND BOOTSTRAP:
+
+Creating a training set, and a test set unseen. 
+
+```{r}
+# Create test and train datasets
+factors <- c(7, 13)
+
+datasets <- vector("list", length(factors))  
+# Loop through each censoring factor and generate datasets
+for (i in seq_along(factors)) {
+  for (j in seq_len(50)) {
+    seed = sample(1:1e6, 1)
+
+    # Run the function with different lambda_c_factor values
+    datasets[[i]][[j]] <- generate_modified_weibull_times(
+      survreg_model,
+      survreg_model_c, 
+      covariates = mb[, c("X1", "X2", "X3", "X4", 
+                          "X5","X6", "X7", "X8", "X9")],
+      lambda_c_factor = factors[[i]], 
+      admin_censoring_times = max(mb$time),
+      seed = seed,
+      n = 1904
+    )
+
+    attr(datasets[[i]][[j]], "seed") <- seed
+    attr(datasets[[i]][[j]], "lambda") <- factors[[i]]
+    attr(datasets[[i]][[j]], "cp") <- attr(datasets[[i]][[j]], "censoring_percentage")
+    
+
+    
+  }  
+}
+
+
+# Load the synthetic datasets 
+#datasets <- load_synthetic_datasets("./Datasets/Synthetic_datasets/50_dat_1000_synthetic_WT_WTc.rds")
+
+# Check if attributes are retained
+#attributes(datasets[[1]][[1]])  # Should return "seed", "lambda", "cp"
+
+
+```
+
+
+```{r, eval=FALSE}
+
+# Save datasets along with attributes in a structured list
+structured_datasets <- list(
+  data = datasets,  # Store the datasets
+  attributes = lapply(datasets, function(lambda_list) {
+    lapply(lambda_list, function(dataset) {
+      attributes(dataset)  # Extract attributes of each dataset
+    })
+  })
+)
+
+# Save the structured list as RDS
+#saveRDS(structured_datasets, "./Datasets/Synthetic_datasets/50_dat_1904_synthetic_WT_WTc.rds")
+#saveRDS(structured_datasets, "./Datasets/Synthetic_datasets/50_dat_1000_synthetic_WT_WTc.rds")
+
+```
+
+```{r}
+#set.seed(123)
+
+# We could keep the same folds and indices since the dataframes are the same
+# Number of folds
+#K <- 5
+n <- nrow(datasets[[1]][[1]])  
+
+# Shuffle and create folds
+#indices <- sample(seq_len(n))
+#folds <- cut(indices, breaks = K, labels = FALSE)
+
+all_predictions <- list()
+
+# Loop through datasets
+for (i in seq_along(datasets)){
+  for (j in seq_along(datasets[[i]])) {
+    # Extract dataset
+    data <- data.frame(datasets[[i]][[j]])
+
+    seed_splits <- sample(1:1e6, 1)
+    set.seed(seed_splits)
+    
+    train_idx <- sample(1:n, size = floor(0.8 * n))
+    train_random <- data[train_idx, ]
+    test_random  <- data[-train_idx,]
+    
+    # for (k in seq_len(K)) {
+    #   # Define test and training indices
+    #   mb_test_idx  <- which(folds == k)
+    #   mb_train_idx <- setdiff(seq_len(n), mb_test_idx)
+    #   
+    #   # Subset the dataset
+    #   mb_train <- dat[mb_train_idx, ]
+    #   mb_test  <- dat[mb_test_idx, ]
+    #   
+    
+    # Extract only the covariates used for predictions
+    test_covariates <- test_random[, c("X1", "X2", "X3", "X4",
+                                   "X5", "X6", "X7", "X8", "X9")]
+    
+    # Fit models
+    cat("Dataset:", i, ".", j, '\n')
+    cat("Cen % train", mean(train_random$status == 0) *100)
+    cat("Cen % test", mean(test_random$status == 0) * 100)
+    #cat("Fold:", k, '\n')
+    cat('Train set dimensions:', dim(train_random), '\n')
+    cat('Test set dimensions:', dim(test_random), '\n')
+    
+    # Fit the model
+    ##### !!! important change from 'time' to synthetic 'observed time'
+    rf <- randomForestSRC::rfsrc(Surv(observed_time, status) ~ X1 + X2 +
+                                   X3 + X4 + X5 + X6 + 
+                                   X7 + X8 + X9, 
+                                 data = train_random, ntree = 100)
+    
+    # Fit with cox ph 
+    cox_ph <- survival::coxph(Surv(observed_time, status) ~ X1 + X2 + 
+                               X3 + X4 + X5 + X6 + 
+                               X7 + X8 + X9, 
+                                 data = train_random)
+    
+    deephit_model <- survivalmodels::deephit(Surv(observed_time, status) ~ 
+                               X1 + X2 + 
+                               X3 + X4 + X5 + X6 + 
+                               X7 + X8 + X9, 
+                               data = train_random, cuts = 50)
+    
+    deepsurv_model <- survivalmodels::deepsurv(Surv(observed_time, status) ~ 
+                                                 X1 + X2 + 
+                                                 X3 + X4 + X5 + X6 + 
+                                                 X7 + X8 + X9, 
+                                               data = train_random)
+    
+    # Generate Predictions
+    risk_rf <- predictRisk(rf, times=max(test_random$observed_time),
+                           newdata = test_random, type = "risk")
+    # Does not work:
+    #pred_cox <- predictRisk(cox_ph, times=max(mb_test$observed_time),
+    #                   newdata = test_random)
+    #pred_cox <- predict(cox_ph, times=max(mb_test$observed_time),
+    #                   newdata = test_random, type = "survival")
+    target_time <- max(test_random$observed_time)
+    
+    # Extract curve
+    sf <- survfit(cox_ph, newdata = test_random)
+    closest_time_idx <- which.min(abs(sf$time - target_time))
+    surv_probs <- sf$surv[closest_time_idx, ]  # 1 row, 1000 patients
+    risk_cox <- 1 - surv_probs
+    
+    # Summary returns survival at specific time
+    #sf_summary <- summary(sf, times = target_time)
+    # Extract survival probabilities for each individual
+    #surv_probs <- sf$surv  # this is S(t)
+    # Convert to risk
+    #pred_cox <- 1 - surv_probs
+    
+    # Need to extract curve
+    surv_deepsurv <- predict(deepsurv_model, newdata = test_random, type = "surv")
+    surv_deephit <- predict(deephit_model, newdata = test_random, type = "surv")
+    
+    time_grid <- as.numeric(colnames(surv_deephit))
+    closest_time_idx <- which.min(abs(time_grid - target_time))
+    
+    # Convert to risk: 1 - S(t)
+    risk_deephit  <- 1 - surv_deephit[, closest_time_idx]
+    
+    time_grid <- as.numeric(colnames(surv_deepsurv))
+    closest_time_idx <- which.min(abs(time_grid - target_time))
+    risk_deepsurv <- 1 - surv_deepsurv[, closest_time_idx]
+
+    # # Generate DeepHit Predictions
+    # pred_deephit <- predict(deephit_model, 
+    #                         newdata = mb_test, 
+    #                         type = "risk")
+    # 
+    # # Generate DeepSurv Predictions
+    # pred_deepsurv <- predict(deepsurv_model, 
+    #                          newdata = mb_test, 
+    #                          type = "risk")
+    #browser()
+    # Collect predictions with corresponding time and status
+    #fold_results <- data.frame(
+    results <- data.frame(
+      rf_predictions = risk_rf,
+      cox_predictions = risk_cox,
+      deephit_predictions = risk_deephit,
+      deepsurv_predictions = risk_deepsurv,
+      time = test_random$observed_time,
+      status = test_random$status,
+      #fold = k,  # Keep track of the fold
+      dataset = rep(i, nrow(test_random)),
+      version = rep(j, nrow(test_random)),
+      # lambda = attributes(dat)$lambda, 
+      # cp = attributes(dat)$cp,
+      # seed = attributes(dat)$seed, 
+      #lambda = rep(attributes(data)$lambda, nrow(test_random)), # inherit
+      #cp = rep(attributes(data)$cp, nrow(test_random)), # inherit
+      #seed_dg = rep(attributes(data)$seed, nrow(test_random)), #inherit
+      #seed_splits = rep(seed_splits, nrow(test_random)),
+      covariates = test_covariates)
+    
+    all_predictions[[paste("Dataset", i, j, 
+                           #"Lambda", attributes(test_random)$lambda,
+                           "Seed", seed,
+                           sep = "_")]] <- results
+    
+  }
+}
+
+# Combine all folds into a single dataframe
+stacked_predictions <- do.call(rbind, all_predictions)
+```
+
+```{r}
+datasets_per_lambda <- unique(stacked_predictions$version)
+```
+
+
+
+```{r}
+prediction_columns <- colnames(stacked_predictions[,c(1:4)])
+```
+
+All datasets are boostraped with a different resample indexes. 
+
+
+```{r}
+mean(stacked_predictions[(stacked_predictions$dataset == 1),]$time)
+```
+Here dataset 1 is lambda = 7, and lambda =13 is dataset 2;
+
+```{r}
+stacked_predictions$lambda <- ifelse(stacked_predictions$dataset == 1, 7, 13)
+```
+
+Actually the function is the same as before, the difference is that the bootstraping is done now over each of the test sets (~381 observations). But when there is 5-fold cross the object to do bootstrap is 381x5 folds. 
+
+
+
+
+```{r, eval=FALSE}
+lambdas <- c(7, 13)
+# Boostrap each dataset 
+n_bootstraps <- 100
+results <- vector("list", length(lambdas))  
+# Loop each dataset in lambda
+for (lambda in seq_along(lambdas)) {
+  # Loop lambdas
+  results[[lambda]] <- vector("list", length(datasets_per_lambda))
+  for (version in datasets_per_lambda) {
+    # Subset the right slice
+    subset_stacked <- 
+      stacked_predictions[(stacked_predictions$version == version
+                           & stacked_predictions$lambda == lambdas[[lambda]]),]
+    # Set the size, which is the same for each dataset
+    dataset_size <- nrow(subset_stacked)
+    # Resample indexes
+    resample_indices <- replicate(n_bootstraps, 
+                                  sample(seq_len(dataset_size), 
+                                         size = dataset_size, replace = TRUE), 
+                                  simplify = FALSE)
+    
+    for (pred_column in prediction_columns) {
+      # Print dataset and lambda
+      cat("Dataset number", version, " for lambda 
+          factor = ", lambdas[[lambda]], ", colum = ", 
+          pred_column, "\n")
+      
+      # Store the results
+      results[[lambda]][[version]][[pred_column]] <-
+        bootstrap.metric.parallel(metrics.wrapper,
+                                  dataset=list(
+                                     predicted = subset_stacked[[pred_column]],
+                                     censoring = subset_stacked$status,
+                                     time = subset_stacked$time),
+                                  implementation = list("Hmisc::rcorr.cens",
+                                                        "survC1::Est.Cval",
+                                                        "pec::cindex",
+                                                        "pysurvival",
+                                                        "sksurvR.ipcw"),
+                                  eval.times = NULL,
+                                  resample_indices = resample_indices,
+                                  additional=list(
+                              sksurv_train_time = mb_train$time,
+                              sksurv_train_status = mb_train$status,
+                              sksurv_tied_tol = 1e-8))
+      
+  
+      
+    }
+  }
+}
+
+#saveRDS(results, "./Results/Hold_out_50_dat_1904_synthetic_WT_WTc_cindex.rds" )
+```
+
+```{r}
+
+implementations = list("Hmisc::rcorr.cens",
+                                   "survC1::Est.Cval",
+                                   "pec::cindex",
+                                   "pysurvival",
+                                   "sksurvR.ipcw")
+# Define which elements of results to process
+lambdas <- c("7", "13")
+
+# Initialize list to store dataframes
+results_df <- list()
+
+# Go trhough lambda
+for (lambda in seq_along(lambdas)) {
+  data_list <- results[[lambda]]
+  df_list <- list()
+  row_idx <- 1
+  # Check each version (50 per lambda)
+  for (dataset_idx in seq_along(data_list)) {
+    dataset <- data_list[[dataset_idx]]
+    # Check each of the model risk predictions
+    for (pred_type in names(dataset)) {
+      # Extract the info
+      pred_data <- dataset[[pred_type]]
+      implems <- names(pred_data$mean)
+      values <- as.numeric(unlist(pred_data$mean))
+      ci <- pred_data$confidence.intervals
+      n <- length(values)
+      df_list[[row_idx]] <- data.frame(
+        dataset_id = rep(dataset_idx, n),
+        prediction_type = rep(pred_type, n),
+        implementation = implems,
+        value = values,
+        ci_lower = ci[implems,1],
+        ci_upper = ci[implems,2],
+        stringsAsFactors = FALSE
+      )
+      row_idx <- row_idx + 1
+    }
+  }
+  
+  # Combine the inner data frame and filter by implementations
+  df <- do.call(rbind, df_list)
+  df <- df[df$implementation %in% implementations, ]
+  
+  # Store in the final list using the result key
+  results_df[[lambda]] <- df
+}
+```
+
+Here results_df is modified to include censoring. We need to get this automatically and avoid this step.
+
+```{r}
+model_order <- c("cox_predictions", "rf_predictions", "deepsurv_predictions", "deephit_predictions")
+
+```
+
+
+```{r}
+cps <- vector("list", length(lambdas)) 
+for (lambda in seq_along(lambdas)) {
+  for (version in datasets_per_lambda) {
+    cps[[lambda]][[version]] <- structured_datasets$attributes[[lambda]][[version]]$censoring_percentage
+  }
+  lambda_cps <- cps[[lambda]]
+  lambda_min<- round(min(unlist(lambda_cps)),2)
+  lambda_max <- round(max(unlist(lambda_cps)),2)
+  # Map the censoring percentages.
+  df <- results_df[[lambda]]
+  df$censoring_percentage <- sapply(df$dataset_id, function(id) cps[[lambda]][[id]])
+  # Order by the censoring percentage
+  df <- df[order(df$censoring_percentage),]
+  df$dataset_id <- factor(df$dataset_id, levels = unique(df$dataset_id))
+  # Add the censroring percentage in x axis
+  df$censoring_label <- paste0(round(df$censoring_percentage, 2), "%")
+  # Keep them in the correct order
+  df$censoring_label <- factor(df$censoring_label, levels = unique(df$censoring_label))
+  # Factor for preference in order
+  df$prediction_type <- factor(df$prediction_type, levels = model_order)
+  # Keep it because we will use it again:
+  results_df[[lambda]] <- df
+  
+  df$prediction_type <- factor(df$prediction_type, levels = model_order)
+  #plot
+  p <- ggplot(df, 
+         aes(x = censoring_label, 
+             y = value, color = implementation)) +
+    geom_point() +
+     geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+    facet_grid(. ~ prediction_type, labeller = labeller(prediction_type = c(
+  "cox_predictions" = "Cox PH",
+  "rf_predictions" = "RSF",
+  "deepsurv_predictions" = "DeepSurv",
+  "deephit_predictions" = "DeepHit"))) +
+    theme_minimal() +
+    labs(
+      x = "Dataset ID (ordered by lower to higher censoring percentage)",
+      y = "Cindex Value",
+      title = paste0("C-index point estimates across models, lambda=", lambdas[[lambda]],
+                    " (", lambda_min, "-", lambda_max, "%)")
+    ) +
+    theme(axis.text.x = element_blank()) +
+    ylim(0.35, 0.75) 
+   # Hide x-axis text if too many datasets
+  print(p)
+}
+```
+
+Plot violin plots
+
+```{r}
+for (lambda in seq_along(lambdas)) {
+  # get the min an max values
+  lambda_min <- round(min(results_df[[lambda]]$censoring_percentage),2)
+  lambda_max <- round(max(results_df[[lambda]]$censoring_percentage),2)
+  # plot
+  p <- ggplot(results_df[[lambda]], 
+              aes(x = implementation, 
+                  y = value, 
+                  fill = implementation)) +
+    
+    geom_violin(trim = FALSE, alpha = 0.7) +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray", size = 0.8) +
+    geom_jitter(width = 0.15, alpha = 0.5, size = 1, color = "black") +
+    facet_grid(. ~ prediction_type, labeller = labeller(prediction_type = c(
+      "cox_predictions" = "Cox PH",
+      "rf_predictions" = "RSF",
+      "deepsurv_predictions" = "DeepSurv",
+      "deephit_predictions" = "DeepHit"))) +
+    theme_minimal() +
+    labs(
+      x = "Implementation",
+      y = "C-index Value",
+      title = paste0("C-index distribution across models, lambda = ",  lambdas[[lambda]],
+                    " (", lambda_min, "-", lambda_max, "%)")
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ylim(0.3, 0.8) 
+  
+  print(p)
+}
+
+```
+
+Get the mean by implementation per model and the CI
+
+```{r}
+for (lambda in seq_along(lambdas)) {
+  # get the min an max values
+  lambda_min <- round(min(results_df[[lambda]]$censoring_percentage),2)
+  lambda_max <- round(max(results_df[[lambda]]$censoring_percentage),2)
+  # Make a summary to extract the mean and ci
+  df_summary <- results_df[[lambda]] %>%
+    group_by(implementation, prediction_type) %>%
+    summarise(
+      mean_cindex = mean(value),
+      lower = quantile(value, 0.025),
+      upper = quantile(value, 0.975)
+    )
+    # Plot
+    p <- ggplot(results_df[[lambda]], 
+              aes(x = implementation, 
+                  y = value, 
+                  fill = implementation)) +
+    
+    geom_violin(trim = FALSE, alpha = 0.7) +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray", size = 0.8) +
+    geom_errorbar(data = df_summary,
+            aes(x = implementation, y = mean_cindex, 
+                ymin = lower, ymax = upper),
+            color = "black", width = 0.4) +
+    #geom_jitter(width = 0.15, alpha = 0.5, size = 1, color = "black") +
+    facet_grid(. ~ prediction_type, labeller = labeller(prediction_type = c(
+      "cox_predictions" = "Cox PH",
+      "rf_predictions" = "RSF",
+      "deepsurv_predictions" = "DeepSurv",
+      "deephit_predictions" = "DeepHit"))) +
+    theme_minimal() +
+    labs(
+      x = "Implementation",
+      y = "C-index Value",
+      title = paste0("C-index distribution across models, lambda = ", lambdas[[lambda]],
+                    " (", lambda_min, "-", lambda_max, "%)")
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ylim(0.3, 0.8) 
+    
+  print(p)
+
+}
+```
+
+
+```{r}
+library(dplyr)
+
+for (lambda in seq_along(lambdas)) {
+  # get the min an max values
+  lambda_min <- round(min(results_df[[lambda]]$censoring_percentage),2)
+  lambda_max <- round(max(results_df[[lambda]]$censoring_percentage),2)
+  # Compute rankings per dataset and prediction type
+  df_ranked <- results_df[[lambda]] %>%
+    group_by(implementation, dataset_id) %>%
+    mutate(rank = rank(-value, ties.method = "min")) 
+  
+  # Heatmap of ranks per dataset
+  p <- ggplot(df_ranked, aes(x = factor(dataset_id), y = implementation, fill = rank)) +
+    geom_tile() +
+    facet_grid(. ~ prediction_type, labeller = labeller(prediction_type = c(
+    "cox_predictions" = "CoxPH",
+    "rf_predictions" = "RSForest",
+    "deepsurv_predictions" = "DeepSurv",
+    "deephit_predictions" = "DeepHit"))) +
+    scale_fill_viridis_c(option = "magma", direction = -1) + 
+    theme_minimal() +
+    labs(
+      x = "Dataset ID (ordered by lower to higher censoring percentage)",
+      y = "Implementation",
+      title = paste0("Ranking of Implementations by Model Lambda= ", lambdas[[lambda]],
+                    " (", lambda_min, "-", lambda_max, "%)"),
+      fill = "Rank"
+    ) +
+    theme(axis.text.x = element_blank())
+    # To check it is in the correct order
+    #theme(axis.text.x =  element_text(angle = 45, hjust = 1)) 
+
+  print(p)
+}
+
+```
+
+```{r}
+library(tidyverse)
+df_rank_correlation <- df_ranked %>%
+   dplyr::select(dataset_id, prediction_type, implementation, rank) %>%
+   pivot_wider(names_from = prediction_type, values_from = rank)
+
+head(df_rank_correlation)
+```
+
+```{r}
+
+friedman_pvals <- map_dbl(unique(df_long$dataset_id), function(did) {
+  df_sub <- df_long %>% filter(dataset_id == did)
+  df_wide <- df_sub %>% 
+    pivot_wider(names_from = prediction_type, values_from = rank) %>%
+    dplyr::select(-dataset_id)
+  
+  # Now rows = implementations, columns = models
+  if (nrow(df_wide) >= 2) {
+    return(friedman.test(as.matrix(df_wide))$p.value)
+  } else {
+    return(NA)
+  }
+})
+
+```
+
+
+```{r}
+df_rank_correlation <- df_ranked %>%
+   dplyr::select(dataset_id, prediction_type, implementation, rank) %>%
+   pivot_wider(names_from = implementation, values_from = rank)
+
+ 
+df_rank_correlation <- df_rank_correlation[, !colnames(df_rank_correlation) 
+                                            %in% c("dataset_id", "prediction_type")]
+correlation_matrix <- cor(df_rank_correlation, 
+                           method = "kendall", 
+                           use = "pairwise.complete.obs")
+  
+print(correlation_matrix)  
+
+```
+```{r}
+friedman.test(as.matrix(df_rank_correlation))
+```
+```{r}
+for (i in implementations) {
+  for (j in implementations) {
+    if (i != j) {
+      test <- wilcox.test(as.matrix(df_rank_correlation)[,i],
+                  as.matrix(df_rank_correlation)[,j],
+                  paired = TRUE,
+                  alternative = "two.sided")$p.value
+      cat("Implementations: ", i, "and ", j, " p-value: ", test, "\n")
+    }
+  }
+}
+```
+
+
+```{r}
+library(tidyverse)
+
+# Plot rankings using a line plot (parallel coordinates)
+ggplot(df_ranked, aes(x = prediction_type, y = rank, group = implementation, color = implementation)) +
+  geom_line(size = 1) +   # Connect ranks per implementation
+  geom_point(size = 2) +  # Highlight points per implementation
+  scale_y_reverse() +     # Lower rank = better, so reverse Y-axis
+  theme_minimal() +
+  labs(
+    x = "Prediction Type",
+    y = "Rank (Lower is Better)",
+    title = "Ranking of Implementations Across Prediction Types",
+    color = "Implementation"
+  ) +
+  facet_wrap(~ dataset_id, ncol = 5)  # Facet by dataset
+
+```
+Calculate % of agreement across datasets
+
+
+### CROSS VALIDATION AND BOOSTRAP and 1 single model: 
+
+# With only one prediction type:
+
+```{r, fig.width=10}
+# Loop through lambdas
+for (lambda in seq_along(lambdas)) {
+  
+  # Get the boostsap result
+  bootstrap_lambda <- bootstrap_object[[lambda]]
+  # Get the number of datasets for each lambda
+  num_datasets <- 1:length(bootstrap_lambda)
+  # Get the exact value of lambda
+  lambda_value <- lambdas[[lambda]]
+  
+  # Retrieve the censoring range per synthetic dataset
+  cp_lambda <- stacked_predictions[stacked_predictions$lambda==lambda_value,]$cp
+  min_cp <- min(cp_lambda) # Min value
+  max_cp <- max(cp_lambda) # Max value
+  
+  
+  
+  # Generate dataframe for ggplot
+  metrics_data <- do.call(rbind, lapply(num_datasets, function(d) {
+      
+      bootstrap_d <- bootstrap_lambda[[d]]
+      
+      data.frame(
+        Dataset = d, 
+        Metric = names(bootstrap_d$mean),
+        Mean = as.numeric(bootstrap_d$mean), 
+        Lower = as.numeric(bootstrap_d$confidence.intervals[, 1]), 
+        Upper = as.numeric(bootstrap_d$confidence.intervals[, 2])
+      )
+    }))
+  
+  # Plot
+  p <- ggplot(metrics_data, aes(x = Dataset, 
+                           y = Mean, 
+                           color = Metric, 
+                           group = Metric)) +
+    geom_line(size = 1) + 
+    geom_point(size = 3) +  
+    geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2) +  
+    geom_hline(yintercept = 0.5, 
+               linetype = "dashed", 
+               color = "gray", 
+               size = 0.8) +  
+    theme_minimal() +
+    scale_x_continuous(breaks = as.numeric(num_datasets)) +
+    labs(
+      title = paste0("Lambda=", lambda_value, 
+                     "(Censoring: ", round(min_cp, 2), 
+                     "-", round(max_cp, 2), "%)"),
+      x = "Dataset",
+      y = "Mean C-Index",
+      color = "Implementation"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ylim(0.5, 0.7)
+
+  print(p)
+}
+```
+
+Ordering by censoring percentage:
+
+```{r, fig.width=10}
+for (lambda in seq_along(lambdas)) {
+  # Get the boostsap result
+  bootstrap_lambda <- bootstrap_object[[lambda]]
+  # Get the number of datasets for each lambda
+  num_datasets <- 1:length(bootstrap_lambda)
+  # Get the exact value of lambda
+  lambda_value <- lambdas[[lambda]]
+  
+  # Retrieve the censoring range per synthetic dataset
+  cp_lambda <- stacked_predictions[stacked_predictions$lambda==lambda_value,]
+  #min_cp <- min(cp_lambda) # Min value
+  #max_cp <- max(cp_lambda) # Max value
+  
+  # Generate dataframe for ggplot
+  metrics_data <- do.call(rbind, lapply(num_datasets, function(d) {
+      
+      bootstrap_d <- bootstrap_lambda[[d]]
+      
+      cp_lambda_version <- unique(cp_lambda[cp_lambda$version==d,]$cp)
+      
+      data.frame(
+        Dataset = d, 
+        Cp = cp_lambda_version,
+        Metric = names(bootstrap_d$mean),
+        Mean = as.numeric(bootstrap_d$mean), 
+        Lower = as.numeric(bootstrap_d$confidence.intervals[, 1]), 
+        Upper = as.numeric(bootstrap_d$confidence.intervals[, 2])
+      )
+    }))
+  
+  # Sort by cp
+  metrics_data <- metrics_data[order(metrics_data$Cp), ]
+  
+  metrics_data$Dataset_Label <- paste0(metrics_data$Dataset, 
+                                       " (", round(metrics_data$Cp, 2), "%)")
+
+  # Plot
+  p <- ggplot(metrics_data, aes(x = factor(Dataset, 
+                                           levels = unique(Dataset)),
+                                y = Mean, 
+                                color = Metric, 
+                                group = Metric)) +
+    geom_line(size = 1) + 
+    geom_point(size = 3) +  
+    geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2) +  
+    geom_hline(yintercept = 0.5, 
+               linetype = "dashed", 
+               color = "gray", 
+               size = 0.8) +  
+    theme_minimal() +
+    scale_x_discrete(labels = unique(metrics_data$Dataset_Label)) + 
+    labs(
+      title = paste0("Lambda=", lambda_value, 
+                     " (Censoring: ", round(min(metrics_data$Cp), 2), 
+                     "-", round(max(metrics_data$Cp), 2), "%)"),
+      x = "Dataset (Cp)", 
+      y = "Mean C-Index", 
+      color = "Implementation"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ylim(0.5, 0.7)
+  
+  print(p)
+
+}
+```
+
+As censoring increases, c-index implementations differ more and more. 
+
+Why does pec::cindex and survC1::Est.Cval give different results?
+They both include ipcw correction with reverse Kaplan Meier of censoring distribution. So, what is happening with weights? Are they being calculated in the same way?
+
+
+```{r}
+plot.violin.metrics(
+  selected_values = lambdas,
+  column_name = "lambda",
+  bootstrap_object = bootstrap_object,
+  stacked_predictions = stacked_predictions,
+  y_limits = c(0.4, 0.7), 
+  implementation = list("pec::cindex",
+                        "Hmisc::rcorr.cens",
+                        "survC1::Est.Cval"),
+  title = "Implementations across censoring levels. Simulated data with Weibull PH"
+)
+```
+
+
+
+
