@@ -1076,7 +1076,6 @@ c <- make_expm_table(results_expm3)
 c$InputType <- "Exp.Mort tau=max(T, delta=1)"
 d <- make_surv_table(results_surv)
 
-
 ```
 
 

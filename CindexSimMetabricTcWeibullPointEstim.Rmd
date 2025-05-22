@@ -129,6 +129,34 @@ mb <- rbind(train, test) # for crossvalidation settings
 ```
 
 ```{r}
+# read the processed file
+mb <- read.table("./Datasets/metabric_preprocess_multiverse.csv", sep="," , header = TRUE)
+
+# Keep the id as index
+rownames(mb) <- mb$PATIENT_ID
+
+# Remove the id column
+mb <- mb[,2:12]
+
+# Sote the previous colnames to keep track of them
+cols <- colnames(mb)
+
+# Asign new column names
+newcols <- c("X1", "X2", "X3", "X4","X5", "X6", "X7", "X8", "X9", "time", "status")
+colnames(mb) <- newcols
+
+# NO NEED OF SUMING, there is no 0s... 
+min(mb$time)
+#mb$time <- mb$time + 1e-8
+
+# Order according to time and status
+mb[order(mb$time, -mb$status),]
+
+
+```
+
+
+```{r}
 source("./CindexHelperFunctions.R")
 ```
 
@@ -142,7 +170,82 @@ survreg_model <- survreg(Surv(time, status) ~ X1 + X2 + X3 +
                                 data = mb[mb$status == 1,], dist="weibull")
 ```
 
-Generate increasing censoring in datasets
+Geneate synthetic event times
+
+
+```{r}
+test <- generate_synthetic_event_times(survreg_model = survreg_model,
+                               n = 1000, 
+                               covariates = mb[, c("X1", "X2", "X3", "X4", 
+                          "X5","X6", "X7", "X8", "X9")],
+                               seed = 123,
+                               verbose = FALSE)
+
+```
+
+
+```{r}
+hist(test$time, breaks = 100)
+```
+
+```{r}
+test_Wtc <- add_censoring(my_surv_data = test, 
+                          cens.type = "weibull", 
+                          cens.params = list(
+                            weibull_cens_model = survreg_model_c,
+                            lambda_c_factor = 1
+                            #cens_limit_admin = max(mb$time)
+                          ), seed=123)
+
+# Combine into a dataframe
+df_hist <- data.frame(
+  value = c(test_Wtc$time, test_Wtc$censoring_time, test_Wtc$observed_time),
+  group = rep(c("Event time", "Censoring time", "Observed time"), each = 1000)
+)
+
+# Plot with ggplot2
+ggplot(df_hist, aes(x = value, fill = group)) +
+  geom_histogram(alpha = 0.3, position = "identity", bins = 30, color = "black") +
+  scale_fill_manual(values = c("steelblue", "darkorange", "darkgreen")) +
+  theme_minimal() +
+  labs(title = "Weibull Proportinal Hazards Censoring times",
+       x = "Value",
+       y = "Frequency",
+       fill = "Dataset")
+
+
+```
+```{r}
+test_Utc <- add_censoring(my_surv_data = test, 
+                          cens.type = "uniform", 
+                          cens.params = list(
+                            #cens_limit_admin = max(mb$time),
+                            #min_cens_unif = NULL, # used only for uniform cens
+                            #max_cens_unif = NULL, # used only for uniform cens
+                            cens_increase_unif = 0  # used only for uniform cens
+                          ), seed=123)
+
+# Combine into a dataframe
+df_hist <- data.frame(
+  value = c(test_Utc$time, test_Utc$censoring_time, test_Utc$observed_time),
+  group = rep(c("Event time", "Censoring time", "Observed time"), each = 1000)
+)
+
+# Plot with ggplot2
+ggplot(df_hist, aes(x = value, fill = group)) +
+  geom_histogram(alpha = 0.3, position = "identity", bins = 30, color = "black") +
+  scale_fill_manual(values = c("steelblue", "darkorange", "darkgreen")) +
+  theme_minimal() +
+  labs(title = "Uniform Censoring Times",
+       x = "Value",
+       y = "Frequency",
+       fill = "Dataset")
+
+
+
+```
+
+
 
 ```{r, eval=FALSE}
 # Generate data with different censoring levels
