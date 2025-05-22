@@ -892,7 +892,8 @@ add_censoring <- function(my_surv_data,
                             max_cens_unif = NULL, # used only for uniform cens
                             cens_increase_unif = NULL,  # used only for uniform cens
                             weibull_cens_model = NULL, # used only for weibull cens
-                            lambda_c_factor = NULL # used only for weibull cens
+                            lambda_c_factor = NULL, # used only for weibull cens
+                            covariates = NULL ## when informative
                           ),
                           seed = 123) {
   
@@ -948,6 +949,33 @@ add_censoring <- function(my_surv_data,
                               cens.params$cens_limit_admin)
     }
     
+  } 
+  if(cens.type == "informative") {
+    # Get parameter values
+    weibull_cens_model <- cens.params$weibull_cens_model
+    lambda_c_factor <- cens.params$lambda_c_factor
+    
+    mu_c    <-  weibull_cens_model$coefficients[1]  # Intercept
+    sigma_c <-  weibull_cens_model$scale  # Scale
+    alpha_c <-  weibull_cens_model$coefficients[-1] # Regression coefficients
+    
+    # Transform to WeibullPH
+    lambda_c <- exp(-mu_c/sigma_c) * lambda_c_factor
+    gamma_c <- 1/sigma_c
+    beta_c <- -alpha_c/sigma_c
+    
+    # Calculate the linear predictor
+    betas_cov_c <- as.matrix(cens.params$covariates) %*% beta_c
+    
+    # Generate censoring times
+    U_c <- runif(n)
+    censoring_times <- (-log(U_c) /(lambda_c * exp(betas_cov_c)))^(1/gamma_c)
+    
+    # add administrative censoring also 
+    if (!is.null(cens.params$cens_limit_admin)) {
+      censoring_times <- pmin(censoring_times, 
+                              cens.params$cens_limit_admin)
+    }
   }
   
   # Create a new data frame with observed times and status

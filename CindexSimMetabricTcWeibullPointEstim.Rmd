@@ -168,6 +168,7 @@ survreg_model_c <- survreg(Surv(mb[mb$status == 0,]$time) ~ 1, dist="weibull")
 survreg_model <- survreg(Surv(time, status) ~ X1 + X2 + X3 + 
                                    X4 + X5 + X6 + X7 + X8 + X9, 
                                 data = mb[mb$status == 1,], dist="weibull")
+
 ```
 
 Geneate synthetic event times
@@ -215,6 +216,45 @@ ggplot(df_hist, aes(x = value, fill = group)) +
 
 
 ```
+
+```{r}
+
+# informative censoring times
+survreg_model_inform <- survreg(Surv(time, status) ~ X1 + X2 + X3 + X4 
+                                + X5 + X6 + X7 + X8 + X9, 
+                                data = mb[mb$status == 0,], dist="weibull")
+
+
+test_Wtc <- add_censoring(my_surv_data = test, 
+                          cens.type = "informative", 
+                          cens.params = list(
+                            weibull_cens_model = survreg_model_inform ,
+                            lambda_c_factor = 1,
+                            covariates = test_Wtc[, c("X1", "X2", "X3", "X4", 
+                          "X5","X6", "X7", "X8", "X9")]
+                          ), seed=123)
+
+# Combine into a dataframe
+df_hist <- data.frame(
+  value = c(test_Wtc$time, test_Wtc$censoring_time, test_Wtc$observed_time),
+  group = rep(c("Event time", "Censoring time", "Observed time"), each = 1000)
+)
+
+# Plot with ggplot2
+ggplot(df_hist, aes(x = value, fill = group)) +
+  geom_histogram(alpha = 0.3, position = "identity", bins = 30, color = "black") +
+  scale_fill_manual(values = c("steelblue", "darkorange", "darkgreen")) +
+  theme_minimal() +
+  labs(title = "Weibull Proportinal Hazards Censoring times",
+       x = "Value",
+       y = "Frequency",
+       fill = "Dataset")
+
+
+```
+
+
+
 ```{r}
 test_Utc <- add_censoring(my_surv_data = test, 
                           cens.type = "uniform", 
@@ -248,32 +288,65 @@ ggplot(df_hist, aes(x = value, fill = group)) +
 
 
 ```{r, eval=FALSE}
-# Generate data with different censoring levels
-#factors <- c(1,3,5,7,9,11,13)
-factors <- c(0, 0.5, 1.5, 3, 7)
 
-datasets <- vector("list", length(factors))  
+factors <- c(0, 0.5, 1.5, 3, 7)
+censoring_increm <- seq(0, 0.4, 0.1)
+
+datasets_weibull <- vector("list", length(factors))  
+datasets_uniform <- vector("list", length(censoring_increm))
 # Loop through each censoring factor and generate datasets
 for (i in seq_along(factors)) {
   for (j in seq_len(10)) {
     seed = sample(1:1e6, 1)
-
+    cat("Seed: ", seed, "\n ")
     # Run the function with different lambda_c_factor values
-    datasets[[i]][[j]] <- generate_modified_weibull_times(
-      survreg_model,
-      survreg_model_c, 
-      covariates = mb[, c("X1", "X2", "X3", "X4", 
-                          "X5","X6", "X7", "X8", "X9")],
-      lambda_c_factor = factors[[i]], 
-      admin_censoring_times = NULL,
-      seed = seed # seed
-    )
-    attr(datasets[[i]][[j]], "seed") <- seed
-    attr(datasets[[i]][[j]], "lambda") <- factors[[i]]
-    attr(datasets[[i]][[j]], "cp") <- attr(datasets[[i]][[j]], "censoring_percentage")
+    dat <- generate_synthetic_event_times(survreg_model = survreg_model,
+                               n = 1000, 
+                               covariates = mb[, c("X1", "X2", "X3", 
+                                                   "X4","X5","X6", 
+                                                   "X7", "X8", "X9")],
+                               seed = 123,
+                               verbose = FALSE)
+    ## Create weibull
+    datasets_weibull[[i]][[j]] <- add_censoring(my_surv_data = dat,
+                          cens.type = "weibull",
+                          cens.params = list(
+                            weibull_cens_model = survreg_model_c, 
+                            lambda_c_factor = factors[[i]]
+                          ),
+                          seed = 123)
+    
+    cp <- sum(datasets_weibull[[i]][[j]]$status == 0) /
+      nrow(datasets_weibull[[i]][[j]]) * 100
+    
+    attr(datasets_weibull[[i]][[j]], "seed") <- seed
+    attr(datasets_weibull[[i]][[j]], "lambda") <- factors[[i]]
+    attr(datasets_weibull[[i]][[j]], "cp") <- cp
+    
+    cat("Lambda: ", factors[[i]], " % Censoring: ", cp, "\n")
+    
+    
+    
+    ## Create Uniform
+    datasets_uniform[[i]][[j]] <- add_censoring(my_surv_data = dat,
+                          cens.type = "uniform",
+                          cens.params = list(
+                            cens_increase_unif = censoring_increm[[i]]
+                          ),
+                          seed = 123)
+    cp <- sum(datasets_uniform[[i]][[j]]$status == 0) /
+      nrow(datasets_uniform[[i]][[j]]) * 100
+
+    attr(datasets_uniform[[i]][[j]], "seed") <- seed
+    attr(datasets_uniform[[i]][[j]], "incre") <- censoring_increm[[i]]
+    attr(datasets_uniform[[i]][[j]], "cp") <- cp
+    
+    cat("Increment: ", censoring_increm[[i]], " % Censoring: ", cp, "\n")
+    
     
   }  
 }
+
 
 
 ```
@@ -281,17 +354,27 @@ for (i in seq_along(factors)) {
 ```{r, eval=FALSE}
 
 # Save datasets along with attributes in a structured list
-structured_datasets <- list(
-  data = datasets,  # Store the datasets
-  attributes = lapply(datasets, function(lambda_list) {
-    lapply(lambda_list, function(dataset) {
+structured_datasets_weibull <- list(
+  data = datasets_weibull,  # Store the datasets
+  attributes = lapply(datasets_weibull, function(factor_list) {
+    lapply(factor_list, function(dataset) {
+      attributes(dataset)  # Extract attributes of each dataset
+    })
+  })
+)
+
+structured_datasets_uniform <- list(
+  data = datasets_uniform,  # Store the datasets
+  attributes = lapply(datasets_uniform, function(increm_list) {
+    lapply(increm_list, function(dataset) {
       attributes(dataset)  # Extract attributes of each dataset
     })
   })
 )
 
 # Save the structured list as RDS
-#saveRDS(structured_datasets, "./Datasets/Synthetic_datasets/10d_synthetic_WT_WTc.rds")
+#saveRDS(structured_datasets_weibull, "./Datasets/Synthetic/10d_synthetic_WT_WTc.rds")
+#saveRDS(structured_datasets_uniform, "./Datasets/Synthetic/10d_synthetic_WT_UTc.rds")
 
 ```
 ```{r}
@@ -302,29 +385,19 @@ structured_datasets <- list(
 # Check if attributes are retained
 #attributes(datasets[[1]][[1]])  # Should return "seed", "lambda", "cp"
 
-datasets <- load_synthetic_datasets("./Datasets/Synthetic_datasets/10d_synthetic_WT_WTc.rds")
-
-```
-
-```{r}
-v <- c()
-for (d in seq(1, datasets_per_lambda)) {
-  dataset <- datasets[[4]][[d]] 
-  n <- length(dataset[["status"]])
-  c <- sum(dataset[["status"]] == 0)
-  p <- c/n * 100
-  v <- append(p, v)
-}
-mean(v)
-#table(datasets[[5]][[3]][["status"]]) * 100 / length(datasets[[5]][[1]][["status"]])
+#datasets <- load_synthetic_datasets("./Datasets/Synthetic_datasets/10d_synthetic_WT_WTc.rds")
 ```
 
 
-#### CROSSVALIDATION 
 
-Only with Coph
+#### CROSSVALIDATION WEIBULL
+
+Only with CoxPH
 
 ```{r, eval=FALSE}
+
+# Weibull
+datasets <- datasets_weibull
 
 set.seed(123)
 # We could keep the same folds and indices since the dataframes are the same
