@@ -1434,3 +1434,87 @@ plot_survival_curves <- function(surv_matrix, patient_ids = NULL, seed = 42,
   
 }
 
+extract_expm_entries <- function(list_exp, lambda) {
+  lapply(seq_along(list_exp), function(dataset_idx) {
+    dataset_results <- list_exp[[dataset_idx]]
+    
+    lapply(names(dataset_results), function(name) {
+      if (name == "batch.metrics") return(NULL)
+      
+      result <- dataset_results[[name]]
+      metrics <- names(result$mean)
+      
+      entries <- lapply(seq_along(metrics), function(i) {
+        metric_name <- metrics[i]
+        mean_c <- result$mean[i]
+        ci <- result$confidence.intervals[i, ]
+        
+        data.frame(
+          Lambda = lambda,
+          Dataset = dataset_idx,
+          Metric = metric_name,
+          Model = "CoxPH",
+          Cindex = mean_c,
+          Lower = ci[1],
+          Upper = ci[2],
+          InputType = "Exp.Mort",
+          stringsAsFactors = FALSE
+        )
+      })
+      
+      do.call(rbind, entries)
+    }) |> 
+      bind_rows()  
+  })
+}
+extract_surv_entries <- function(list_surv, lambda) {
+  lapply(seq_along(list_surv), function(dataset_idx) {
+    dataset_results <- list_surv[[dataset_idx]]
+    
+    lapply(names(dataset_results), function(name) {
+      if (name == "batch.metrics") return(NULL)
+      
+      result <- dataset_results[[name]]
+      metrics <- names(result$mean)
+      
+      entries <- lapply(1:2, function(i) {
+        metric_name <- metrics[i]
+        mean_c <- result$mean[i]
+        ci <- result$confidence.intervals[i, ]
+        
+        data.frame(
+          Lambda = lambda,
+          Dataset = dataset_idx,
+          Metric = metric_name,
+          Model = "CoxPH",
+          Cindex = mean_c,
+          Lower = ci[1],
+          Upper = ci[2],
+          InputType = "Distrib.",
+          stringsAsFactors = FALSE
+        )
+      })
+      
+      do.call(rbind, entries)
+    }) |>
+      bind_rows()
+  })
+}
+
+extract_expm_pairs <- function(list_exp, lambda, extract) {
+  all_batches <- lapply(seq_along(list_exp), function(dataset_idx) {
+    dataset_results <- list_exp[[dataset_idx]]
+
+    filtered_list <- lapply(names(dataset_results), function(name) {
+      results <- dataset_results[[name]]
+      batch_metrics <- data.frame(results$batch.metrics)
+      
+      filtered_batch <- batch_metrics[, extract]
+      filtered_batch$lambda <- lambda
+      filtered_batch$dataset <- dataset_idx
+      return(filtered_batch)
+      })
+    }) 
+    
+    bind_rows(unlist(all_batches, recursive = FALSE))
+  }

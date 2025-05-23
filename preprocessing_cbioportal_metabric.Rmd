@@ -76,8 +76,8 @@ expr_subset$PATIENT_ID <- rownames(expr_subset)
 
 # Reducing it to the interestings genes
 # For the whole expression dataset please download from cBioportal
-write.table(expr_subset, "./Datasets/brca_metabric/subset_data_mrna_illumina_microarray.txt",
-            sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+#write.table(expr_subset, "./Datasets/brca_metabric/subset_data_mrna_illumina_microarray.txt",
+#            sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
 
 ```
 
@@ -95,7 +95,7 @@ clinical <- read.delim("./Datasets/brca_metabric/data_clinical_patient.txt",
 
 clincal_of_interest <- c("PATIENT_ID","HORMONE_THERAPY", "RADIO_THERAPY", 
                          "CHEMOTHERAPY", "ER_IHC", "AGE_AT_DIAGNOSIS", 
-                         "OS_MONTHS", "OS_STATUS")
+                         "OS_MONTHS", "OS_STATUS", "VITAL_STATUS")
 
 clinical_subset <- clinical[,clincal_of_interest]
 
@@ -121,7 +121,15 @@ dim(mb2)
 head(mb2)
 
 ```
+It might be of relevance in the future to consider the existance of competing risks:
 
+```{r}
+table(mb2$VITAL_STATUS)
+```
+
+```{r}
+mb2 <- mb2[,1:12]
+```
 
 
 ```{r}
