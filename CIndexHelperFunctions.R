@@ -1337,6 +1337,35 @@ make_expm_plot_entries <- function(results_list) {
   do.call(rbind, expm_entries)
 }
 
+make_surv_plot_entries <- function(results_list) {
+  surv_entries <- lapply(names(results_list), function(name) {
+    if (name == "batch.metrics") return(NULL)
+    
+    result <- results_list[[name]]
+    metrics <- names(result$mean)
+    
+    entries <- lapply(seq_along(metrics), function(i) {
+      metric_name <- metrics[i]
+      mean_c <- result$mean[i]
+      ci <- result$confidence.intervals[i, ]
+      
+      data.frame(
+        Metric = metric_name,
+        Model = name,
+        cindex = mean_c,
+        lower = ci[1],
+        upper = ci[2],
+        InputType = "Distrib.",
+        stringsAsFactors = FALSE
+      )
+    })
+    
+    do.call(rbind, entries)
+  })
+  
+  do.call(rbind, surv_entries)
+}
+
 make_expm_table <- function(results_list) {
   expm_entries <- lapply(names(results_list), function(name) {
     if (name == "batch.metrics") return(NULL)
