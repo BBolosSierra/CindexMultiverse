@@ -159,7 +159,7 @@ cuts                         & NA                & NA               & 300       
 # We could keep the same folds and indices since the dataframes are the same
 # Number of folds
 #K <- 5 
-#n <- nrow(mb)  
+n <- nrow(mb)  
 # R <- 1
 # Interesting times for comparison
 all_predictions <- list()
@@ -424,13 +424,131 @@ fold_results <- data.frame(ho_repeat = "DeepSurvSplits",
  
 
 # Append fold results to the list
-all_predictions[[paste("DeepSurvSplits")]] <- fold_results
+all_predictions[[paste("Split")]] <- fold_results
 
 
 stacked_predictions <- do.call(rbind, all_predictions)
 
 ```
 
+```{r, fig.height=8, fig.width=13}
+
+fit <- prodlim(Hist(time, status) ~ 1, data = mb_train)
+
+plot(fit,
+     xlab = "Time (months)",
+     ylab = "Censoring probability",
+     confint = TRUE,
+     legend = FALSE,
+     col = "black",
+     lwd = 2)
+
+tmp <- mb_train
+tmp$censor.status <- ifelse(tmp$status %in% c(1, 2), 1, 0)
+
+tmp <- tmp[order(tmp$time),]
+
+weight.i <- pec::ipcw(formula=Surv(time,censor.status)~1,
+                 data=tmp,
+                 method="marginal",
+                 times=unique(tmp$time),
+                 subjectTimes=tmp$time, 
+                 what = "IPCW.subjectTimes")$IPCW.subjectTimes
+weight.j <- pec::ipcw(formula=Surv(time,censor.status)~1,
+                 data=tmp,
+                 method="marginal",
+                 times=unique(tmp$time),
+                 subjectTimes=tmp$time,
+                 subjectTimesLag=0,
+                 what="IPCW.times")$IPCW.times
+
+
+time_points <- unique(tmp$time)
+
+# Compute G2
+G2 <- (1 / weight.j)^2
+
+# Plot G2 vs time
+plot(time_points, G2,
+     type = "l",
+     col = "black",
+     lwd = 2,
+     xlab = "Time",
+     ylab = expression(G[2](t) == (1 / w[t])^2),
+     main = expression("Variation of " ~ G[2](t) ~ "over time"))
+
+# Compute G2
+G2 <- (1 / weight.j)^2
+
+# Plot G2 vs time
+plot(time_points, log(G2),
+     type = "l",
+     col = "black",
+     lwd = 2,
+     xlab = "Time",
+     ylab = expression(log(G[2](t) == (1 / w[t])^2)),
+     main = expression("Variation of " ~ log(G[2](t)) ~ "over time"))
+
+```
+```{r, fig.height=8, fig.width=13}
+
+fit <- prodlim(Hist(time, status) ~ 1, data = mb_test)
+
+plot(fit,
+     xlab = "Time (months)",
+     ylab = "Censoring probability",
+     confint = TRUE,
+     legend = FALSE,
+     col = "black",
+     lwd = 2)
+
+
+tmp <- mb_test
+tmp$censor.status <- ifelse(tmp$status %in% c(1, 2), 1, 0)
+
+tmp <- tmp[order(tmp$time),]
+
+weight.i <- pec::ipcw(formula=Surv(time,censor.status)~1,
+                 data=tmp,
+                 method="marginal",
+                 times=unique(tmp$time),
+                 subjectTimes=tmp$time, 
+                 what = "IPCW.subjectTimes")$IPCW.subjectTimes
+weight.j <- pec::ipcw(formula=Surv(time,censor.status)~1,
+                 data=tmp,
+                 method="marginal",
+                 times=unique(tmp$time),
+                 subjectTimes=tmp$time,
+                 subjectTimesLag=0,
+                 what="IPCW.times")$IPCW.times
+
+
+time_points <- unique(tmp$time)
+
+# Compute G2
+G2 <- (1 / weight.j)^2
+
+# Plot G2 vs time
+plot(time_points, G2,
+     type = "l",
+     col = "black",
+     lwd = 2,
+     xlab = "Time",
+     ylab = expression(G[2](t) == (1 / w[t])^2),
+     main = expression("Variation of " ~ G[2](t) ~ "over time"))
+
+# Compute G2
+G2 <- (1 / weight.j)^2
+
+# Plot G2 vs time
+plot(time_points, log(G2),
+     type = "l",
+     col = "black",
+     lwd = 2,
+     xlab = "Time",
+     ylab = expression(log(G[2](t) == (1 / w[t])^2)),
+     main = expression("Variation of " ~ log(G[2](t)) ~ "over time"))
+```
 
 ```{r}
 #plot_survival_curves(surv_deepsurv, title = "DeepSurv Survival Curves")
@@ -482,11 +600,7 @@ for (r in seq_along(resample_indices)) {
   
 }
 
-```
 
-
-
-```{r}
 select_exps <- grep("ExpMort\\.",colnames(subset_expm[[1]]), value = TRUE)
 results_expm1 <- list()
 for (exps in select_exps) {
@@ -527,7 +641,6 @@ for (exps in select_exps) {
                               sksurv_tied_tol = 1e-8))
 }
 
-
 model_names <- unique(sub("\\..*", "", grep("^[A-Za-z]+\\.\\d+$",
                                             colnames(subset_surv[[1]]), value = TRUE)))
 results_surv <- list()
@@ -542,6 +655,8 @@ for (model in model_names) {
                                   implementation = list("pycox.Ant", "pycox.Adj.Ant"),
                                   sampled_data = subset_surv)
 }
+
+select_exps <- grep("ExpMort\\.",colnames(subset_expm[[1]]), value = TRUE)
 results_expm3 <- list()
 for (exps in select_exps) {
    cat("Calculating bootstrap for ExpMort for Model = ", exps, "\n")
@@ -556,7 +671,11 @@ for (exps in select_exps) {
                                                         "survival.n/G2",
                                                         "sksurv.ipcw"),
                                   eval.times = 120, #C
-                                  sampled_data = subset_expm)
+                                  sampled_data = subset_expm, 
+                                additional=list(
+                              sksurv_train_time = mb_train$time, 
+                              sksurv_train_status = mb_train$status, 
+                              sksurv_tied_tol = 1e-8))
 }
 ```
 
@@ -567,7 +686,7 @@ for (exps in select_exps) {
 expm_df_plot1 <- make_expm_plot_entries(results_expm1)
 expm_df_plot2 <- make_expm_plot_entries(results_expm2)
 expm_df_plot3 <- make_expm_plot_entries(results_expm3)
-
+surv_df_plot  <- make_surv_plot_entries(results_surv)
 
 expm_df_plot1$Notation <- "C"
 expm_df_plot2$Notation <- "C_tau"

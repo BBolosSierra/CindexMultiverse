@@ -578,6 +578,9 @@ for (i in seq_along(datasets)){
 #saveRDS(stacked_predictions, "./Results/WeibullSyntheticStackedPredictions.rds")
 ```
 
+```{r}
+stacked_predictions <- readRDS( "./Results/WeibullSyntheticStackedPredictions.rds")
+```
 
 
 #### TEST
@@ -675,7 +678,7 @@ for (l in seq_along(stacked_predictions)) {
     
     # Create empty lists
     subset_surv <- list()
-    
+    subset_expm <- list()
     # Boostrapping
     for (r in seq_along(resample_indices)){
       subset_expm[[r]] <- get_model_preds2(stacked_predictions = subset[[dataset]], 
@@ -742,8 +745,57 @@ for (l in seq_along(stacked_predictions)) {
 results_per_lambda <- readRDS("./Results/WeibullSynthetic.rds")
 ```
 
+```{r}
+#datasets_per_lambda <- unique(stacked_predictions$version)
+datasets_per_lambda <- 10
+```
+
+```{r}
+factors <- c(0, 0.5, 1.5, 3, 7)
+```
+
+```{r}
+#lambdas <- unique(stacked_predictions$lambda)
+lambdas <- length(factors)
+```
+
 
 #### Plot
+
+```{r}
+
+# Load the synthetic datasets and restore attributes
+datasets <- load_synthetic_datasets("./Datasets/Synthetic/10d_synthetic_WT_WTc.rds")
+
+# Check if attributes are retained
+#attributes(datasets[[1]][[1]])  # Should return "seed", "factor.cens", "cp"
+
+#datasets <- load_synthetic_datasets("./Datasets/Synthetic_datasets/10d_synthetic_WT_WTc.rds")
+```
+
+Range of censoring per factor:
+
+```{r}
+cp_list <- c()
+for (i in seq_along(datasets)){
+  for (j in seq_along(datasets[[i]])) {
+    # Extract dataset
+    dat <- data.frame(datasets[[i]][[j]])
+    cp <- attributes(datasets[[i]][[j]])$cp
+  }
+   cp_list <- append(cp_list, cp)
+}
+
+cp_list
+```
+
+```{r}
+test <- datasets[[4]][[1]]
+```
+
+```{r}
+hist(test$observed_time)
+```
 
 ```{r}
 all_results <- list()
@@ -785,8 +837,41 @@ final_df <- do.call(rbind, all_results)
 #saveRDS(final_df, "./Results/SyntheticObjects/10d_c_ind_results_processed_TcW_123.rds")
 ```
 
+```{r}
+# Map the actual percentages of censoring
+final_df$cp_value <- cp_list[match(final_df$Lambda, factors)]
+```
 
+```{r, fig.width=7, fig.height=6}
 
+ggplot(final_df[(final_df$Notation == "C_tau" | final_df$Notation == "C"),],
+       aes(x = as.factor(cp_value), y = Cindex)) +
+  geom_violin(alpha = 0.2, color = "black") +
+  #geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
+  facet_wrap(~Metric) +
+  labs(
+       y = "C-index",
+       x = "Censoring percentage",
+       fill = "Input Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+```
+
+```{r}
+ggplot(final_df[(final_df$Notation == "C_td"),],
+       aes(x = as.factor(cp_value), y = Cindex)) +
+  geom_violin(alpha = 0.2, color = "black") +
+  #geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
+  facet_wrap(~Metric) +
+  labs(
+       y = "C-index",
+       x = "Censoring percentage",
+       fill = "Input Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+```
 ```{r}
 ggplot(final_df[(final_df$Notation == "C_tau" | final_df$Notation == "C"),],  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
   geom_violin(alpha = 0.4, color = "black") +
@@ -843,25 +928,24 @@ for (l in seq_along(results_per_lambda)) {
 df_pairs <- do.call(rbind, pairs)
 df_pairs <- data.frame(lapply(df_pairs, as.numeric))
 
-df_pairs$survival.n.G2.CompPairs <- df_pairs$survival.n.G2.CP + df_pairs$survival.n.G2.DP
-df_pairs$survival.n.CompPairs <- df_pairs$survival.n.CP + df_pairs$survival.n.DP
+df_pairs$survival.n.G2.Comparable <- df_pairs$survival.n.G2.CP + df_pairs$survival.n.G2.DP
+df_pairs$survival.n.Comparable <- df_pairs$survival.n.CP + df_pairs$survival.n.DP
 
-df_pairs$survival.n.G2.ConPairs <- df_pairs$survival.n.G2.CP 
-df_pairs$survival.n.ConPairs <- df_pairs$survival.n.CP
-
+df_pairs$survival.n.G2.Concordant <- df_pairs$survival.n.G2.CP 
+df_pairs$survival.n.Concordant <- df_pairs$survival.n.CP
 ```
 
 
-```{r}
+```{r, fig.width=8, fig.height=7}
 library(tidyverse)
 library(patchwork)
 # Example: Assume df_pairs has these columns:
-# lambda, dataset, survival.n.G2.CompPairs, survival.n.G2.CP, survival.n.CompPairs, survival.n.CP
+# factor.cens, dataset, survival.n.G2.CompPairs, survival.n.G2.CP, survival.n.CompPairs, survival.n.CP
 
 # Reshape to long format
 df_long <- df_pairs[,
-  c("survival.n.G2.ConPairs", "survival.n.G2.CompPairs", 
-         "survival.n.ConPairs", "survival.n.CompPairs", "lambda", "dataset")] %>%
+  c("survival.n.G2.Concordant", "survival.n.G2.Comparable", 
+         "survival.n.Concordant", "survival.n.Comparable", "lambda", "dataset")] %>%
   pivot_longer(
     cols = starts_with("survival.n"),
     names_to = "Metric",
@@ -874,28 +958,39 @@ df_long <- df_pairs[,
     )
   )
 
+df_long <- df_long %>%
+  mutate(
+    PairType = case_when(
+      grepl("Comparable", Metric) ~ "Comparable",
+      grepl("Concordant", Metric) ~ "Concordant",
+      TRUE ~ "Other"
+    )
+  )
+
 df_long$Group <- factor(df_long$Group, levels = c(
   "survival.n",
   "survival.n/G2"
 ))
+
+df_long$cp_value <- cp_list[match(df_long$lambda, factors)]
 # First plot
-p1 <- ggplot(df_long, aes(x = as.factor(lambda), y = Value, fill = Metric)) +
+p1 <- ggplot(df_long, aes(x = as.factor(cp_value), y = Value, fill = PairType)) +
   geom_boxplot(alpha = 0.5, outlier.shape = NA) +
-  facet_wrap(~ Group, scales = "fixed") +
-  labs(x = "Lambda", y = "Number of pairs", title = "") +
-  theme_minimal(base_size = 14) +
+  facet_wrap(~Group, scales = "free") +
+  scale_fill_manual(values = c("Comparable" = "grey80", "Concordant" = "grey20")) +
+  labs(x = "", y = "Number of pairs") +
+  theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 # Second plot
 p2 <- ggplot(final_df[((final_df$Notation == "C_tau" | final_df$Notation == "C") & 
                          (final_df$Metric == "survival.n" | final_df$Metric == "survival.n/G2")),],  
-             aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
+             aes(x = as.factor(cp_value), y = Cindex)) +
   geom_violin(alpha = 0.4, color = "black") +
-  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
+  #geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
   facet_wrap(~ Metric) +
-  labs(title = "",
-       y = "C-index",
-       x = "Lambda",
+  labs( y = "C-index",
+       x = "Censoring percentage",
        fill = "Input Type") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
@@ -930,33 +1025,6 @@ final_df %>%
 
 
 
-```{r}
-imp_map <- data.frame(
-  Metric = c("Hmisc::rcorr.cens", "SurvMetrics::Cindex", "lifelines", "pysurvival", 
-             "sksurv.censored", "pec::cindex", "survC1::Est.Cval", "survival.n", 
-             "survival.n/G2", "pycox.Ant", "pycox.Adj.Ant", "sksurv.ipcw"),
-  Implementation = c("Hmisc", "SurvMetrics", "lifelines", "pysurvival", "sksurv.censored",
-  "pec", "survC1", 'survival.n', 'survival.n/G2', 
-  "pycox.Ant", "pycox.Adj.Ant", "sksurv.ipcw"),
-  stringsAsFactors = FALSE
-)
-
-notation_map <- data.frame(
-  Implementation = c("pycox.Ant", "pycox.Adj.Ant", 
-             "pec", "survC1", "survival.n/G2", "sksurv.ipcw","survival.n", 
-             "Hmisc", "SurvMetrics", "lifelines", "pysurvival", 
-             "sksurv.censored"),
-  Notation = c("C td", "C td", 
-               "C tau", "C tau", "C tau", 
-               "C tau", "C tau",
-               "C", "C", "C", "C", "C"),
-  stringsAsFactors = FALSE
-)
-
-
-final_df <- merge(final_df, imp_map, by = "Metric", all.x = TRUE)
-final_df <- merge(final_df, notation_map, by = "Implementation", all.x = TRUE)
-```
 
 ```{r}
 

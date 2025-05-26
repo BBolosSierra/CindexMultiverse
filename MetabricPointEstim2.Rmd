@@ -119,12 +119,6 @@ source("./CindexHelperFunctions.R")
 
 
 ```{r, fig.height=8, fig.width=13}
-WKM <-riskRegression::ipcw(Hist(time,status) ~ .,
-  data=mb,
-  method="marginal",
-  times=sort(unique(mb$time)),
-  keep=c("fit"))
-plot(WKM$fit)
 
 fit <- prodlim(Hist(time, status) ~ 1, data = mb)
 
@@ -164,11 +158,24 @@ G2 <- (1 / weight.j)^2
 # Plot G2 vs time
 plot(time_points, G2,
      type = "l",
-     col = "blue",
+     col = "black",
      lwd = 2,
      xlab = "Time",
      ylab = expression(G[2](t) == (1 / w[t])^2),
      main = expression("Variation of " ~ G[2](t) ~ "over time"))
+
+# Compute G2
+G2 <- (1 / weight.j)^2
+
+# Plot G2 vs time
+plot(time_points, log(G2),
+     type = "l",
+     col = "black",
+     lwd = 2,
+     xlab = "Time",
+     ylab = expression(log(G[2](t) == (1 / w[t])^2)),
+     main = expression("Variation of " ~ log(G[2](t)) ~ "over time"))
+
 
 ```
 
@@ -501,36 +508,12 @@ for (k in 1:K) {
 
 stacked_predictions <- do.call(rbind, all_predictions)
 
+
+#saveRDS(stacked_predictions, "./Results/5foldCV_MetabricStackedPredictions.rds")
+#saveRDS(survival_curves, "./Results/5foldCV_MetabricSurvivalCurves.rds")
 ```
 
 
-
-```{r}
-
-plot_survival_curves <- function(surv_matrix, patient_ids = NULL, seed = 42, 
-                                 title = "Survival Curves") {
-  if (is.null(patient_ids)) {
-    set.seed(seed)
-    patient_ids <- sample(1:nrow(surv_matrix), 5)
-  }
-
-  subset_curves <- surv_matrix[patient_ids, , drop = FALSE]
-  df <- as.data.frame(subset_curves)
-  df$patient_id <- paste0("Patient_", patient_ids)
-  df <- df[, c(ncol(df), 1:(ncol(df) - 1))]
-  
-  df_long <- reshape2::melt(df, id.vars = "patient_id", variable.name = "time", value.name = "surv_prob")
-  df_long$time <- as.numeric(as.character(df_long$time))
-
-  # Plot
-  ggplot(df_long, aes(x = time, y = surv_prob, color = patient_id)) +
-    geom_line(linewidth = 1) +
-    labs(title = title, x = "Time", y = "Survival Probability") +
-    theme_minimal()
-
-}
-
-```
 
 ```{r}
 # Plot 
@@ -719,8 +702,29 @@ ggplot(risk_tau_maxU_plot, aes(x = as.numeric(Time), y = cindex, color = Model, 
   theme(legend.position = "bottom",
         axis.text.x = element_text(angle = 45, hjust = 1))
 
-```
 
+ggplot(risk_tau_maxU_plot[(risk_tau_maxU_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_maxU_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, color = Metric, group = Metric)) +
+  geom_line(linewidth = 1) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3) +
+  facet_wrap(~ Model) +
+  ylim(0.5, 0.72) +
+  theme_minimal(base_size = 12) +
+  labs(x = "Time (t)", y = "C-index", color = "Model",
+       title = "Model Performance for Risk at t (tau as max of uncensored time)") +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(risk_tau_maxU_plot[(risk_tau_maxU_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_maxU_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, shape = Metric, group = Metric)) +
+  geom_line(linewidth = 1) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.5) +
+  facet_wrap(~ Model) +
+  ylim(0.5, 0.72) +
+  theme_minimal(base_size = 12) +
+  labs(x = "Time (t)", y = "C-index", color = "Model",
+       title = "Model Performance for Risk at t (tau as max of uncensored time)") +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
 
 
 ```{r, fig.height=8, fig.width=10}
@@ -730,6 +734,28 @@ ggplot(risk_tau_10_plot, aes(x = as.numeric(Time), y = cindex, color = Model, gr
   geom_line(linewidth = 1) +
   geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3) +
   facet_wrap(~ Metric) +
+  ylim(0.5, 0.72) +
+  theme_minimal(base_size = 12) +
+  labs(x = "Time (t)", y = "C-index", color = "Model",
+       title = "Model Performance for Risk at t (tau = 10y)") +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(risk_tau_10_plot[(risk_tau_10_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_10_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, color = Metric, group = Metric)) +
+  geom_line(linewidth = 1) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3) +
+  facet_wrap(~ Model) +
+  ylim(0.5, 0.72) +
+  theme_minimal(base_size = 12) +
+  labs(x = "Time (t)", y = "C-index", color = "Model",
+       title = "Model Performance for Risk at t (tau = 10y)") +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(risk_tau_10_plot[(risk_tau_10_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_10_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, shape = Metric, group = Metric)) +
+  geom_line(linewidth = 1) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.5) +
+  facet_wrap(~ Model) +
   ylim(0.5, 0.72) +
   theme_minimal(base_size = 12) +
   labs(x = "Time (t)", y = "C-index", color = "Model",
@@ -755,6 +781,33 @@ ggplot(risk_t_plot, aes(x = as.numeric(Time), y = cindex, color = Model, group =
   theme(legend.position = "bottom",
         axis.text.x = element_text(angle = 45, hjust = 1))
 
+ggplot(risk_tau_10_plot[(risk_t_plot$Metric == "Hmisc::rcorr.cens" |
+                           risk_t_plot$Metric == "pec::cindex"),], 
+       aes(x = as.numeric(Time), y = cindex, color = Metric, group = Metric)) +
+  geom_line(linewidth = 1) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3) +
+  facet_wrap(~ Model) +
+  ylim(0.5, 0.72) +
+  theme_minimal(base_size = 12) +
+  labs(x = "Time (t)", y = "C-index", color = "Model",
+       title = "Model Performance for Risk at t (tau = t)") +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(risk_tau_10_plot[(risk_t_plot$Metric == "Hmisc::rcorr.cens" |
+                           risk_t_plot$Metric == "pec::cindex"),], 
+       aes(x = as.numeric(Time), y = cindex, shape = Metric, group = Metric)) +
+  geom_line(linewidth = 1) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.5) +
+  facet_wrap(~ Model) +
+  ylim(0.5, 0.72) +
+  theme_minimal(base_size = 12) +
+  labs(x = "Time (t)", y = "C-index", color = "Model",
+       title = "Model Performance for Risk at t (tau = t)") +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+
 ```
 
 
@@ -774,6 +827,18 @@ For the paper, digestible analysis C, C_tau and Ctd
 #    ),
 #    "./Results/results_5fold_facet_plots.rds"
 #  )
+
+results <- readRDS("./Results/results_5fold_facet_plots.rds")
+
+results_risk1 = results$results_risk1
+results_risk2 = results$results_risk2
+results_expm1 = results$results_expm1
+results_expm2 = results$results_expm2
+results_expm3 = results$results_expm3
+results_surv  = results$results_surv
+
+
+
 ```
 
 
