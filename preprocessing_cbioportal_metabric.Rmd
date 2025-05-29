@@ -283,6 +283,20 @@ mb2[genes_of_interest] <- lapply(mb2[genes_of_interest], as.numeric)
   ))
  
 ```
+```{r}
+mb[cols_to_recode] <- lapply(mb[cols_to_recode], function(col) {
+  ifelse(col %in% c("YES", "Positve", "1:DECEASED"), 1, ## not positive... typo
+         ifelse(col %in% c("NO", "Negative", "0:LIVING"), 0, NA))
+})
+
+mb[cols_to_recode] <- lapply(mb[cols_to_recode], as.factor)
+ mb[, c(2:12)] %>% 
+  tbl_summary(
+    by = OS_STATUS,
+    statistic = list(all_continuous() ~ "{mean} ({sd})",
+                     all_categorical() ~ "{n} ({p}%)"
+  ))
+```
 
 ```{r, eval=FALSE}
 #write.csv(mb2, "./Datasets/metabric_preprocess_multiverse.csv", row.names = FALSE)

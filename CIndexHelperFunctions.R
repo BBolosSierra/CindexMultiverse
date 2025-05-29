@@ -67,8 +67,14 @@ pycoxR_SurvMatrix_Ant <- function(time, surv_matrix, censoring){
   
   # Create pandas dataframe
   surv_df <- pd$DataFrame(data = surv_np, index = time_index)
-
-  ev <- EvalSurv(surv_df, time_py, censoring_py, censor_surv = "km")
+  
+  # Very important and quite problematic!! 
+  # censor_surv = "km" does not adjust for censoring. 
+  # it is made for other performace metrics, but does NOT apply to 
+  # concordance index in pycox
+  # Leaving it as NULL, as it makes no difference than default or "km"
+  # Tested in TestingAntolinis.py
+  ev <- EvalSurv(surv_df, time_py, censoring_py, censor_surv = NULL) 
   
   py_to_r(ev$concordance_td(method = "antolini"))
 }
@@ -96,7 +102,13 @@ pycoxR_SurvMatrix_AdjAnt <- function(time, surv_matrix, censoring){
   # Create pandas dataframe
   surv_df <- pd$DataFrame(data = surv_np, index = time_index)
   
-  ev <- EvalSurv(surv_df, time_py, censoring_py, censor_surv = "km")
+  # Very important and quite problematic!! 
+  # censor_surv = "km" does not adjust for censoring. 
+  # it is made for other performace metrics, but does NOT apply to 
+  # concordance index in pycox
+  # Leaving it as NULL, as it makes no difference than default or "km"
+  # Tested in TestingAntolinis.py
+  ev <- EvalSurv(surv_df, time_py, censoring_py, censor_surv = NULL)
   
   py_to_r(ev$concordance_td(method = "adj_antolini"))
 }
@@ -452,7 +464,7 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
     
   }
   
-  
+
   # Uno's real implementation: 
   # https://github.com/cran/survC1/blob/master/R/FUN-cstat-ver003b.R
   # https://github.com/cran/survC1/blob/master/src/husurvC1v1.f
@@ -593,9 +605,8 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
     
   }
   
-  # If no implementations match, return NA for all metrics
   if (length(results) == 0) {
-    stop("Missing implementation list. 
+    stop("Missing implementation list.
          It is required a list with all the c-index 
          implementations that need to be computed")
   }
