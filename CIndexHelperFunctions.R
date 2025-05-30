@@ -1,6 +1,5 @@
 set.seed(123)
 
-
 # Lifelines wrapper for R
 lifelinesR <- function(time, predicted, censoring){
   # Function to convert python into R wrapping lifelines
@@ -13,36 +12,10 @@ lifelinesR <- function(time, predicted, censoring){
 
 }
 
-# pycox wrapper for R
-# If this is done, there is no antolinis... 
-# pycoxR <- function(time, predicted, censoring, eval.times) {  
-#   
-#   # Import numpy and pandas with False to use the python objects
-#   np <- import("numpy", convert = FALSE)  
-#   pd <- import("pandas", convert = FALSE)
-#   EvalSurv <- import("pycox.evaluation", convert = FALSE)$EvalSurv
-# 
-#   # Convert R to python with correct float or int
-#   time_py <- np$array(as.numeric(time), dtype = "float64")  
-#   censoring_py <- np$array(as.integer(censoring), dtype = "int32")  
-#   predicted_py <- np$array(as.numeric(predicted), dtype = "float64")
-#   
-#   St <- np$subtract(1, predicted_py)
-#   
-#   St_reshaped <- St$reshape(1L, -1L)
-#   
-#   eval_times_py <-  np$array(list(as.numeric(eval.times)), dtype = "float64")
-#   
-#   surv_df <- pd$DataFrame(data = St_reshaped, index = eval_times_py)  
-#   
-#   ev <- EvalSurv(surv_df, time_py, censoring_py, censor_surv = 'km')
-# 
-#   # Two versions of C-index: here antolini used in DeepHit
-#   # Alternatively "adj_antolini"
-#   py_to_r(ev$concordance_td("antolini"))
-# 
-# }
 
+
+
+### Reticulate to use pycox code:
 pycoxR_SurvMatrix_Ant <- function(time, surv_matrix, censoring){
   ### As difference from the previous one, this function calculates
   ### c-index across all times 
@@ -50,6 +23,7 @@ pycoxR_SurvMatrix_Ant <- function(time, surv_matrix, censoring){
   np <- import("numpy", convert = FALSE)  
   pd <- import("pandas", convert = FALSE)
   EvalSurv <- import("pycox.evaluation", convert = FALSE)$EvalSurv
+  pc_eval <- import("pycox.evaluation.concordance")
   
   # Convert R to python with correct float or int
   time_py <- np$array(as.numeric(time), dtype = "float64")  
@@ -74,9 +48,23 @@ pycoxR_SurvMatrix_Ant <- function(time, surv_matrix, censoring){
   # concordance index in pycox
   # Leaving it as NULL, as it makes no difference than default or "km"
   # Tested in TestingAntolinis.py
-  ev <- EvalSurv(surv_df, time_py, censoring_py, censor_surv = NULL) 
+  ev <- EvalSurv(surv_df, time_py, censoring_py, censor_surv = NULL)
+  cindex <- py_to_r(ev$concordance_td(method = "antolini"))
   
-  py_to_r(ev$concordance_td(method = "antolini"))
+  surv_idx <- np$searchsorted(time_index, time_py)
+  
+  num_concordant <- pc_eval$`_sum_concordant_disc`(surv_np, time_py, censoring_py, surv_idx, pc_eval$`_is_concordant_antolini`)
+  num_comparable <- pc_eval$`_sum_comparable`(time_py, censoring_py, pc_eval$`_is_comparable_antolini`)
+  
+  num_concordant <- py_to_r(num_concordant)
+  num_comparable <- py_to_r(num_comparable)
+  
+  
+  return(list(
+    cindex = cindex,
+    concordant = num_concordant,
+    comparable = num_comparable
+  ))
 }
 
 
@@ -86,6 +74,7 @@ pycoxR_SurvMatrix_AdjAnt <- function(time, surv_matrix, censoring){
   np <- import("numpy", convert = FALSE)  
   pd <- import("pandas", convert = FALSE)
   EvalSurv <- import("pycox.evaluation", convert = FALSE)$EvalSurv
+  pc_eval <- import("pycox.evaluation.concordance")
   
   # Convert R to python with correct float or int
   time_py <- np$array(as.numeric(time), dtype = "float64")  
@@ -98,7 +87,6 @@ pycoxR_SurvMatrix_AdjAnt <- function(time, surv_matrix, censoring){
   
   # Time index 
   time_index <- np$array(as.numeric(colnames(surv_matrix)), dtype = "float64")
-  
   # Create pandas dataframe
   surv_df <- pd$DataFrame(data = surv_np, index = time_index)
   
@@ -109,8 +97,22 @@ pycoxR_SurvMatrix_AdjAnt <- function(time, surv_matrix, censoring){
   # Leaving it as NULL, as it makes no difference than default or "km"
   # Tested in TestingAntolinis.py
   ev <- EvalSurv(surv_df, time_py, censoring_py, censor_surv = NULL)
+  cindex <- py_to_r(ev$concordance_td(method = "adj_antolini"))
   
-  py_to_r(ev$concordance_td(method = "adj_antolini"))
+  surv_idx <- np$searchsorted(time_index, time_py)
+  
+  num_concordant <- pc_eval$`_sum_concordant_disc`(surv_np, time_py, censoring_py, surv_idx, pc_eval$`_is_concordant`)
+  num_comparable <- pc_eval$`_sum_comparable`(time_py, censoring_py, pc_eval$`_is_comparable`)
+  
+  num_concordant <- py_to_r(num_concordant)
+  num_comparable <- py_to_r(num_comparable)
+  
+  
+  return(list(
+    cindex = cindex,
+    concordant = num_concordant,
+    comparable = num_comparable
+  ))
 }
 
 
@@ -521,18 +523,24 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
   if ("pycox.Ant" %in% implementation) {
     # Handle Python implementations
     #results[["pycox"]] <- pycoxR(time, predicted, censoring, eval.times)
-    results[["pycox.Ant"]] <- pycoxR_SurvMatrix_Ant(time=time, 
-                                                    surv_matrix=surv_matrix, 
-                                                    censoring=censoring)
+    pycox_ant <- pycoxR_SurvMatrix_Ant(time=time, 
+                                       surv_matrix=surv_matrix, 
+                                       censoring=censoring)
     
+    results[["pycox.Ant"]] <- pycox_adj$cindex
+    results[["pycox.Ant.EP"]] <- pycox_adj$comparable
+    results[["pycox.Ant.CP"]] <- pycox_adj$concordant
   }
   if ("pycox.Adj.Ant" %in% implementation) {
     # Handle Python implementations
     #results[["pycox"]] <- pycoxR(time, predicted, censoring, eval.times)
-    results[["pycox.Adj.Ant"]] <- pycoxR_SurvMatrix_AdjAnt(time=time, 
-                                                           surv_matrix=surv_matrix, 
-                                                           censoring=censoring)
+    pycox_adj <- pycoxR_SurvMatrix_AdjAnt(time=time, 
+                                          surv_matrix=surv_matrix, 
+                                          censoring=censoring)
     
+    results[["pycox.Adj.Ant"]] <- pycox_adj$cindex
+    results[["pycox.Adj.Ant.EP"]] <- pycox_adj$comparable
+    results[["pycox.Adj.Ant.CP"]] <- pycox_adj$concordant
   }
   #https://github.com/square/pysurvival/blob/master/pysurvival/cpp_extensions/metrics.cpp
   if ("pysurvival" %in% implementation){
