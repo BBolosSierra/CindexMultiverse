@@ -527,9 +527,9 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
                                        surv_matrix=surv_matrix, 
                                        censoring=censoring)
     
-    results[["pycox.Ant"]] <- pycox_adj$cindex
-    results[["pycox.Ant.EP"]] <- pycox_adj$comparable
-    results[["pycox.Ant.CP"]] <- pycox_adj$concordant
+    results[["pycox.Ant"]] <- pycox_ant$cindex
+    results[["pycox.Ant.EP"]] <- pycox_ant$comparable
+    results[["pycox.Ant.CP"]] <- pycox_ant$concordant
   }
   if ("pycox.Adj.Ant" %in% implementation) {
     # Handle Python implementations
