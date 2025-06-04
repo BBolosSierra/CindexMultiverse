@@ -13,8 +13,6 @@ lifelinesR <- function(time, predicted, censoring){
 }
 
 
-
-
 ### Reticulate to use pycox code:
 pycoxR_SurvMatrix_Ant <- function(time, surv_matrix, censoring){
   ### As difference from the previous one, this function calculates
@@ -41,7 +39,6 @@ pycoxR_SurvMatrix_Ant <- function(time, surv_matrix, censoring){
   
   # Create pandas dataframe
   surv_df <- pd$DataFrame(data = surv_np, index = time_index)
-  
   # Very important and quite problematic!! 
   # censor_surv = "km" does not adjust for censoring. 
   # it is made for other performace metrics, but does NOT apply to 
@@ -172,7 +169,7 @@ sksurv.ipcwR <- function(time, predicted, censoring,
   
   # Compute IPCW-adjusted C-index
   c_index_ipcw <- sksurv$concordance_index_ipcw(
-    survival_train = train_survival_py,
+    survival_train = train_survival_py, #test_survival_py,
     survival_test = test_survival_py,
     estimate = predicted_py,
     tau = eval.times,
@@ -265,10 +262,13 @@ bootstrap.metric <- function(metrics.wrapper,
   # Calculate mean and 95% confidence intervals for each metric
   subset_metrics <- metrics_df[, colnames(metrics_df) %in% implementation, drop = FALSE] 
   mean_metrics <- colMeans(subset_metrics, na.rm = TRUE)
+  # conf_intervals <- t(apply(subset_metrics, 2, function(metric) {
+  #   mean_metric <- mean(metric, na.rm = TRUE)
+  #   stderr <- sd(metric, na.rm = TRUE) / sqrt(N_bootstraps)
+  #   mean_metric + qt(c(0.025, 0.975), df = N_bootstraps - 1) * stderr
+  # }))
   conf_intervals <- t(apply(subset_metrics, 2, function(metric) {
-    mean_metric <- mean(metric, na.rm = TRUE)
-    stderr <- sd(metric, na.rm = TRUE) / sqrt(N_bootstraps)
-    mean_metric + qt(c(0.025, 0.975), df = N_bootstraps - 1) * stderr
+    quantile(metric, probs = c(0.025, 0.975), na.rm = TRUE)
   }))
   
   return(list(
@@ -342,7 +342,7 @@ bootstrap.metric.parallel <- function(metrics.wrapper,
         # Just take the survival matrix for the selected 
         surv_mat = sampled_data_[, grep(dataset$predicted, names(sampled_data_), value = TRUE), drop = FALSE]
         # Run the implementations
-        #browser()
+
         # iterations[[i]] <- do.call(metrics.wrapper, c(data, list(surv_matrix = surv_matrix), list(implementation = implementation), eval.times, additional)) # sksurv.ipcw
         colnames(surv_mat) <- as.numeric(sub(".*\\.", "", colnames(surv_mat)))
         surv_matrixes[[i]] <- surv_mat
@@ -403,13 +403,16 @@ bootstrap.metric.parallel <- function(metrics.wrapper,
 
   # Need to remove index from paralelization
   rownames(metrics_df) <- NULL
+
   # Calculate mean and 95% confidence intervals for each metric
   subset_metrics <- metrics_df[, colnames(metrics_df) %in% implementation, drop = FALSE] 
   mean_metrics <- apply(subset_metrics, 2, function(x) mean(as.numeric(x), na.rm = TRUE))
+  # conf_intervals <- t(apply(subset_metrics, 2, function(metric) {
+  #   mean_metric <- mean(as.numeric(metric), na.rm = TRUE)
+  #   stderr <- sd(as.numeric(metric), na.rm = TRUE) / sqrt(N_bootstraps)
+  #   mean_metric + qt(c(0.025, 0.975), df = N_bootstraps - 1) * stderr
   conf_intervals <- t(apply(subset_metrics, 2, function(metric) {
-    mean_metric <- mean(as.numeric(metric), na.rm = TRUE)
-    stderr <- sd(as.numeric(metric), na.rm = TRUE) / sqrt(N_bootstraps)
-    mean_metric + qt(c(0.025, 0.975), df = N_bootstraps - 1) * stderr
+    quantile(as.numeric(metric), probs = c(0.025, 0.975), na.rm = TRUE)
   }))
   
   return(list(
@@ -522,6 +525,7 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
   # using the eval.times only to subset the survival probabilities at a time point
   if ("pycox.Ant" %in% implementation) {
     # Handle Python implementations
+
     #results[["pycox"]] <- pycoxR(time, predicted, censoring, eval.times)
     pycox_ant <- pycoxR_SurvMatrix_Ant(time=time, 
                                        surv_matrix=surv_matrix, 
@@ -912,6 +916,8 @@ add_censoring <- function(my_surv_data,
                             cens_increase_unif = NULL,  # used only for uniform cens
                             weibull_cens_model = NULL, # used only for weibull cens
                             lambda_c_factor = NULL, # used only for weibull cens
+                            weibull_cens_model_low = NULL, # informative cens
+                            weibull_cens_model_high = NULL, # informative cens
                             covariates = NULL ## when informative
                           ),
                           seed = 123) {
@@ -995,7 +1001,9 @@ add_censoring <- function(my_surv_data,
       censoring_times <- pmin(censoring_times, 
                               cens.params$cens_limit_admin)
     }
+    
   }
+
   
   # Create a new data frame with observed times and status
   my_surv_data$censoring_time <- censoring_times
@@ -1326,7 +1334,7 @@ make_risk_table <- function(results_list) {
 }
 
 
-make_expm_plot_entries <- function(results_list) {
+make_expm_plot_entries <- function(results_list, point_estimate) {
   expm_entries <- lapply(names(results_list), function(name) {
     if (name == "batch.metrics") return(NULL)
     
@@ -1336,9 +1344,10 @@ make_expm_plot_entries <- function(results_list) {
     
     entries <- lapply(seq_along(metrics), function(i) {
       metric_name <- metrics[i]
-      mean_c <- result$mean[i]
+      #mean_c <- result$mean[i] # mean of bootstrap
+      mean_c <- point_estimate[[name]][[metric_name]]
       ci <- result$confidence.intervals[i, ]
-      
+
       data.frame(
         Metric = metric_name,
         Model = model,
@@ -1356,7 +1365,7 @@ make_expm_plot_entries <- function(results_list) {
   do.call(rbind, expm_entries)
 }
 
-make_surv_plot_entries <- function(results_list) {
+make_surv_plot_entries <- function(results_list, point_estimate) {
   surv_entries <- lapply(names(results_list), function(name) {
     if (name == "batch.metrics") return(NULL)
     
@@ -1365,7 +1374,8 @@ make_surv_plot_entries <- function(results_list) {
     
     entries <- lapply(seq_along(metrics), function(i) {
       metric_name <- metrics[i]
-      mean_c <- result$mean[i]
+      #mean_c <- result$mean[i] # mean of bootstrap
+      mean_c <- point_estimate[[name]][[metric_name]]
       ci <- result$confidence.intervals[i, ]
       
       data.frame(
@@ -1566,3 +1576,25 @@ extract_expm_pairs <- function(list_exp, lambda, extract) {
     
     bind_rows(unlist(all_batches, recursive = FALSE))
   }
+
+extract_batch_metrics <- function(results_list) {
+  models <- names(results_list)
+  
+  # Loop over models
+  metrics_list <- lapply(models, function(model_name) {
+    model_data <- results_list[[model_name]]
+    
+    if (!is.null(model_data$batch.metrics)) {
+      df <- model_data$batch.metrics
+      df$Model <- model_name
+      return(df)
+    } else {
+      return(NULL)
+    }
+  })
+  
+  # Combine all into a single data.frame
+  metrics_df <- do.call(rbind, metrics_list)
+  return(metrics_df)
+}
+
