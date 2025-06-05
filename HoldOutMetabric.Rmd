@@ -588,13 +588,21 @@ plot_survival_curves(survival_curves$Coxtime, title = "Cox Time Survival Curves"
 plot_survival_curves(survival_curves$RSF, title = "RSF Survival Curves")
 ```
 
+### Comparison of C-index estimates. 
 
-Bootstrap 100 times the test set that is stacked_predictions, the size of the bootstrapped sample is equal to the test set. 
+Here, we apply the difference C-index implementations to quantify predictive 
+performance in each test set. To quantify uncertainty for the C-index estimates, 
+we use bootstraping. For each test set, 100 bootstrap samples (same sample size 
+as the test set) were generated and the same C-index implementations were 
+applied for each bootstrap sample. Results are summarised using ... 
+
+[CAV: we need to update to explain how the results are summarised. The code
+below seems to have some legacy code that is not used anymore. I think that 
+the up-to-date code is from line 731 onwards, correct?]
 
 
-
-
-```{r}
+```{r bootstrap C-index}
+# Set seed for reproducibility
 set.seed(123)
 
 stacked_predictions <- folds_stacked_predictions[folds_stacked_predictions$cv_fold == 1, ] 
