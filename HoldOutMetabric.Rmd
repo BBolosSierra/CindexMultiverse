@@ -447,7 +447,7 @@ To facilitate the interpretation of the differences across C-index estimates,
 we calculate the censoring probabilities for the training and test sets.
 
 [CAV: Bego, this needs to be updated to use the new data splits, plotting for 
-each fold]
+each fold. This is probably not needed as you have plots in a later chunk.]
 
 ```{r, fig.height=8, fig.width=13}
 
@@ -577,7 +577,7 @@ plot(time_points, log(G2),
 Here, we plot the predicted survival curves
 
 [CAV: Bego, I cannot run this as I don't have access to the `survival_curves` 
-object. Please edit earlier code according to my suggestions]
+object. Please edit earlier code according to my suggestions. Maybe this is not needed as you are doing plots later on in the bootstrap section?]
 
 ```{r}
 # Plot 
