@@ -163,7 +163,8 @@ source("./CindexHelperFunctions.R")
 ```{r}
 # censoring times
 survreg_model_c <- survreg(Surv(mb[mb$status == 0,]$time) ~ 1, dist="weibull")
-# survreg_model_c <- survreg(Surv(time, !status) ~ 1, 
+
+#survreg_model_c <- survreg(Surv(time, !status) ~ 1, 
 #                            data=mb, dist="weibull")
 
 # survival times
@@ -171,9 +172,9 @@ survreg_model <- survreg(Surv(time, status) ~ X1 + X2 + X3 +
                                    X4 + X5 + X6 + X7 + X8 + X9,
                                 data = mb[mb$status == 1,], dist="weibull")
 
-# survreg_model <- survreg(Surv(time, status) ~ X1 + X2 + X3 + 
-#                                    X4 + X5 + X6 + X7 + X8 + X9, 
-#                                 data = mb, dist="weibull")
+#survreg_model <- survreg(Surv(time, status) ~ X1 + X2 + X3 +
+#                                   X4 + X5 + X6 + X7 + X8 + X9,
+#                                data = mb, dist="weibull")
 
 
 ```
@@ -223,6 +224,34 @@ ggplot(df_hist, aes(x = value, fill = group)) +
 
 
 ```
+```{r}
+survreg_model_c <- survreg(Surv(time, !status) ~ I(X9 < threshold),
+                           dist="weibull",
+                           data = mb[mb$status == 0,])
+
+threshold <- median(mb$X9)
+
+survreg_low <- survreg(Surv(time, !status) ~ 1, 
+                       data = mb[mb$X9 < threshold, ], dist = "weibull")
+
+survreg_high <- survreg(Surv(time, !status) ~ 1, 
+                        data = mb[mb$X9 >= threshold, ], dist = "weibull")
+
+
+test_Itc <- add_censoring(
+  my_surv_data = test,
+  cens.type = "informative2",
+  cens.params = list(
+    weibull_cens_model_low = survreg_low,
+    weibull_cens_model_high = survreg_high,
+    covariates = test[, c("X9")]
+  ),
+  seed = 123
+)
+```
+
+
+Another way of adding the informative censoring:
 
 ```{r}
 
@@ -230,14 +259,19 @@ ggplot(df_hist, aes(x = value, fill = group)) +
 survreg_model_inform <- survreg(Surv(time, !status) ~  
                                  X6 + X7 + X9, ## rounded otherwise no converge
                                 data = mb, dist="weibull")
+# 
+# survreg_model_inform <- survreg(Surv(time, !status) ~  
+#                                  X6 + X7 + X9, ## rounded otherwise no converge
+#                                 data = mb, dist="weibull")
 
 
-test_Wtc <- add_censoring(my_surv_data = test, 
+
+test_Itc <- add_censoring(my_surv_data = test, 
                           cens.type = "informative", 
                           cens.params = list(
                             weibull_cens_model = survreg_model_inform,
                             lambda_c_factor = 1,
-                            covariates = test_Wtc[, c(
+                            covariates = test[, c(
                           "X6", "X7", "X9")]
                           ), seed=123)
 

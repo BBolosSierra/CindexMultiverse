@@ -658,6 +658,19 @@ max(folds_stacked_predictions[folds_stacked_predictions$cv_fold == 4, ]$test_tim
 max(folds_stacked_predictions[folds_stacked_predictions$cv_fold == 5, ]$test_time)
 ```
 
+
+
+```{r}
+for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
+  
+  stacked_predictions <- folds_stacked_predictions[folds_stacked_predictions$cv_fold == fold_n, ] 
+  mb_train <- folds_stacked_predictions[folds_stacked_predictions$cv_fold != fold_n, ] 
+  print(max(stacked_predictions$test_time))
+  max_uncensored_time = max(stacked_predictions$test_time[stacked_predictions$test_status == 1]) # C tau.
+  print(max_uncensored_time)
+}
+```
+
 ```{r}
 
 hold_results <- vector("list", 5) 
@@ -668,6 +681,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   stacked_predictions <- folds_stacked_predictions[folds_stacked_predictions$cv_fold == fold_n, ] 
   mb_train <- folds_stacked_predictions[folds_stacked_predictions$cv_fold != fold_n, ] 
   
+  max_uncensored_time = max(stacked_predictions$test_time[stacked_predictions$test_status == 1])
   n_bootstraps <- 100
   
   dataset_size <- nrow(stacked_predictions) 
@@ -740,7 +754,8 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
                                                           "survival.n/G2",
                                                           "sksurv.ipcw"),
                                     #eval.times = round(max(mb$time[mb$status == 1])), # C tau.
-                                    eval.times = 298,
+                                    #eval.times = 298,
+                                    eval.times = max_uncensored_time,
                                     sampled_data = subset_expm, 
                                     additional=list(
                                 sksurv_train_time = mb_train$test_time, 
@@ -755,7 +770,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
                                                           "survival.n/G2",
                                                           "sksurv.ipcw"), 
                                                       #eval.times =  round(max(mb$time[mb$status == 1])),
-                                                      eval.times = 298,
+                                                      eval.times =  max_uncensored_time,
                                                       sksurv_train_time = mb_train$test_time,
                                                       sksurv_train_status = mb_train$test_status,
                                                       sksurv_tied_tol = 1e-8)
@@ -781,7 +796,8 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
     results_surv_point_estim[[model]] <- metrics.wrapper(surv_matrix = surv_mat, 
                                                       censoring = stacked_predictions$test_status, 
                                                       time = stacked_predictions$test_time, 
-                                                      implementation = list("pycox.Ant", "pycox.Adj.Ant"))
+                                                      implementation = list("pycox.Ant",
+                                                                            "pycox.Adj.Ant"))
   }
   
   select_exps <- grep("ExpMort\\.",colnames(subset_expm[[1]]), value = TRUE)
@@ -858,8 +874,8 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
 
   expm_df_plot1$Notation <- "C"
   expm_df_plot2$Notation <- "C_tau"
-  expm_df_plot3$Notation <- "C_tau_10"  # if needed
-  surv_df_plot$Notation  <- "C_td"  # or whatever makes sense
+  expm_df_plot3$Notation <- "C_tau_10"  
+  surv_df_plot$Notation  <- "C_td" 
   
   df_plot <- bind_rows(expm_df_plot1, expm_df_plot2, expm_df_plot3, surv_df_plot)
   df_plot$Metric <- sub("::.*", "", df_plot$Metric)
@@ -891,6 +907,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
      facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
      geom_vline(xintercept = separator_positions, 
                 linetype = "dashed", color = "grey70") +
+     #geom_hline(linetype = "dashed", yintercept = 0.5) +
     #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
     labs(title = paste0("Fold ", fold_n),
          y = "C-index", x = NULL) +
@@ -911,6 +928,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
                                    "CoxPH" = 19, "DeepSurv" = 22, "CoxTime" = 24)) +
      geom_vline(xintercept = separator_positions, 
                 linetype = "dashed", color = "grey70") +
+     #geom_hline(linetype = "dashed", yintercept = 0.5) +
      #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
      labs(title = paste0("Fold ", fold_n),
          y = "C-index", x = NULL) +
@@ -1018,39 +1036,11 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
 ```
 
 
-
-
-
-
-
-
-
-
-### Study 3:
-
-Trying different implementations:
-
-```{r}
-a <- make_expm_table(results_expm1)
-b <- make_expm_table(results_expm2)
-b$InputType <- "Exp.Mort tau=10y"
-c <- make_expm_table(results_expm3)
-c$InputType <- "Exp.Mort tau=max(T, delta=1)"
-d <- make_surv_table(results_surv)
-
-
-```
-
-
-
-
 ### Table with results
 
-Gather all the results
-
 
 ```{r}
-df_combined <- bind_rows(a, b, c, d)
+
 
 notation_map <- data.frame(
   Metric = c("pycox.Ant", "pycox.Adj.Ant", 
@@ -1064,18 +1054,55 @@ notation_map <- data.frame(
   stringsAsFactors = FALSE
 )
 
-df_combined$Metric <- sub("::.*", "", df_combined$Metric)
-df_combined <- merge(df_combined, notation_map, by= "Metric", all.x = TRUE)
+all_folds <- list()
+
+for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
+  
+  results_expm1 = hold_results[[fold_n]]$results_expm1
+  results_expm2 = hold_results[[fold_n]]$results_expm2
+  results_expm3 = hold_results[[fold_n]]$results_expm3
+  results_surv = hold_results[[fold_n]]$results_surv
+  
+  results_expm1_point_estim = hold_results[[fold_n]]$results_expm1_point_estim
+  results_expm2_point_estim = hold_results[[fold_n]]$results_expm2_point_estim
+  results_expm3_point_estim = hold_results[[fold_n]]$results_expm3_point_estim
+  results_surv_point_estim = hold_results[[fold_n]]$results_surv_point_estim
+
+  a <- make_expm_table(results_expm1, results_expm1_point_estim)
+  a$Fold <- fold_n
+  b <- make_expm_table(results_expm2, results_expm2_point_estim)
+  b$InputType <- "Exp.Mort tau=max(T, delta=1)"
+  b$Fold <- fold_n
+  c <- make_expm_table(results_expm3, results_expm3_point_estim)
+  c$InputType <- "Exp.Mort tau=10y"
+  c$Fold <- fold_n
+  d <- make_surv_table(results_surv, results_surv_point_estim)
+  d$Fold <- fold_n
+  
+  df_combined <- bind_rows(a, b, c, d)
+  
+  df_combined$Metric <- sub("::.*", "", df_combined$Metric)
+  df_combined <- merge(df_combined, notation_map, by= "Metric", all.x = TRUE)
+
+  all_folds[[fold_n]] <- df_combined
+
+} 
+
+final_table <- bind_rows(all_folds)
+
 
 ```
 
 
+
+
 #### Save table
+
 
 ```{r}
 library(kableExtra)
 
-df_combined_bolded <- df_combined
+df_combined_bolded <- final_table
 
 for (i in 1:nrow(df_combined_bolded)) {
   row <- df_combined_bolded[i, model_names]

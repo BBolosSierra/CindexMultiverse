@@ -217,7 +217,9 @@ bootstrap.metric <- function(metrics.wrapper,
       sampled_data <- sample_dataset(dataset, resample_idx)
   
       # For the sampled data what happens if we sort
-      iterations[[i]] <- do.call(metrics.wrapper, c(sampled_data, list(implementation = implementation), eval.times, additional)) # sksurv.ipcw
+      iterations[[i]] <- do.call(metrics.wrapper, 
+                                 c(sampled_data, list(implementation = implementation), 
+                                   eval.times, additional)) # sksurv.ipcw
   
     }
   # if the data has already been sampled from indexes:  
@@ -441,7 +443,7 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
   implementation <- unlist(implementation)
   
   # If eval.times is missing, set to the maximum uncensoring time as in pec
-  if (missing(eval.times) || is.null(eval.times)) {
+  if (missing(eval.times) || is.null(eval.times) || (eval.times == "resample_max_uncensored_time")) {
     eval.times <- max(time[censoring == 1], na.rm=TRUE) # ?
   }
   results$batch.eval.times <- c(results$batch.eval.times, eval.times)
@@ -1395,7 +1397,7 @@ make_surv_plot_entries <- function(results_list, point_estimate) {
   do.call(rbind, surv_entries)
 }
 
-make_expm_table <- function(results_list) {
+make_expm_table <- function(results_list, point_estimate) {
   expm_entries <- lapply(names(results_list), function(name) {
     if (name == "batch.metrics") return(NULL)
     
@@ -1405,7 +1407,8 @@ make_expm_table <- function(results_list) {
     
     entries <- lapply(seq_along(metrics), function(i) {
       metric_name <- metrics[i]
-      mean_c <- result$mean[i]
+      #mean_c <- result$mean[i]
+      mean_c <- point_estimate[[name]][[metric_name]]
       ci <- result$confidence.intervals[i, ]
       value <- sprintf("%.3f [%.3f–%.3f]", mean_c, ci[1], ci[2])
       
@@ -1433,7 +1436,7 @@ make_expm_table <- function(results_list) {
   return(df_wide)
 }
 
-make_surv_table <- function(results_list) {
+make_surv_table <- function(results_list, point_estimate) {
   surv_entries <- lapply(names(results_list), function(name) {
     if (name == "batch.metrics") return(NULL)
     
@@ -1442,7 +1445,8 @@ make_surv_table <- function(results_list) {
     metrics <- names(result$mean)
     
     entries <- lapply(1:2, function(i) {
-      mean_c <- result$mean[i]
+      #mean_c <- result$mean[i]
+      mean_c <- point_estimate[[name]][[metrics[[i]]]]
       ci <- result$confidence.intervals[i, ]
       value <- sprintf("%.3f [%.3f–%.3f]", mean_c, ci[1], ci[2])
       
