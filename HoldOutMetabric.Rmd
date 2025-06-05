@@ -427,6 +427,28 @@ stacked_predictions <- do.call(rbind, all_predictions)
 
 ```
 
+As the training of the models can take a long time, we save the results to an 
+Rds file which we load here. 
+
+```{r load results}
+folds_stacked_predictions <- 
+  readRDS("./Results/5foldCV_MetabricStackedPredictions.rds")
+```
+
+[CAV: have you saved `survival_curves` too? The chunk related to model fitting
+should include the code you used to save the `survival_curves` and 
+`folds_stacked_predictions` objects. Then, the `load results` chunk should 
+have all the code needed to run it].
+
+
+### Censoring probabilities
+
+To facilitate the interpretation of the differences across C-index estimates,
+we calculate the censoring probabilities for the training and test sets.
+
+[CAV: Bego, this needs to be updated to use the new data splits, plotting for 
+each fold]
+
 ```{r, fig.height=8, fig.width=13}
 
 fit <- prodlim(Hist(time, status) ~ 1, data = mb_train)
@@ -550,8 +572,14 @@ plot(time_points, log(G2),
 #plot_survival_curves(surv_deepsurv, title = "DeepSurv Survival Curves")
 ```
 
-```{r}
+### Predicted survival curves
 
+Here, we plot the predicted survival curves
+
+[CAV: Bego, I cannot run this as I don't have access to the `survival_curves` 
+object. Please edit earlier code according to my suggestions]
+
+```{r}
 # Plot 
 plot_survival_curves(survival_curves$DeepHit, title = "DeepHit Survival Curves")
 plot_survival_curves(survival_curves$DeepSurv, title = "DeepSurv Survival Curves")
@@ -563,9 +591,7 @@ plot_survival_curves(survival_curves$RSF, title = "RSF Survival Curves")
 
 Bootstrap 100 times the test set that is stacked_predictions, the size of the bootstrapped sample is equal to the test set. 
 
-```{r}
-folds_stacked_predictions <- readRDS("./Results/5foldCV_MetabricStackedPredictions.rds")
-```
+
 
 
 ```{r}
