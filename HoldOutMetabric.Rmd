@@ -4,7 +4,9 @@ output: html_document
 date: "2025-04-20"
 ---
 
-## Concordance index multiverse.
+# Concordance index multiverse - METABRIC analysis (hold-out)
+
+## Setup the environment
 
 Load libraries
 
@@ -32,6 +34,7 @@ library(foreach)
 library(MASS)
 library(flexsurv)
 library(furrr)
+# install.packages("./pysurvivalR.tar.gz", repos = NULL, type = "source")
 library(pysurvivalR)
 library(survivalmodels)
 library(mlr3)
@@ -55,11 +58,21 @@ Sys.setenv(OPENBLAS_NUM_THREADS = "1")  # Limits OpenBLAS to 1 thread
 #py_config()
 ```
 
+We also load a set of helper functions used throuhgout our analysis:
 
+```{r}
+source("./CindexHelperFunctions.R")
+```
+
+## Load the data
+
+Here, we load the pre-processed METABRIC data that was generated using the 
+`preprocessing_biocportal_metabric.R` script.
 
 ```{r}
 # read the processed file
-mb <- read.table("./Datasets/metabric_preprocess_multiverse.csv", sep="," , header = TRUE)
+mb <- read.table("./Datasets/metabric_preprocess_multiverse.csv", 
+                 sep = "," , header = TRUE)
 
 # Keep the id as index
 rownames(mb) <- mb$PATIENT_ID
@@ -67,45 +80,53 @@ rownames(mb) <- mb$PATIENT_ID
 # Remove the id column
 mb <- mb[,2:12]
 
-# Sote the previous colnames to keep track of them
+# Store the previous colnames to keep track of them
 cols <- colnames(mb)
 
-# Asign new column names
+# Assign new column names
 newcols <- c("X1", "X2", "X3", "X4","X5", "X6", "X7", "X8", "X9", "time", "status")
 colnames(mb) <- newcols
 
-# NO NEED OF SUMING, there is no 0s... 
-min(mb$time)
-#mb$time <- mb$time + 1e-8
-
-# Order according to time and status
-mb[order(mb$time, -mb$status),]
-
+# Summary statistics for the survival times
+summary(mb$time)
 ```
 
-```{r}
-source("./CindexHelperFunctions.R")
-```
+The data contains information about `r nrow(mb)` individuals, with 
+`r sum(mb$status == 1)` events and `r sum(mb$status == 0)` censored 
+observations. The survival times are measured in months.
 
+## Evaluation of predictive performance using a data holdout approach
 
-### HOLDOUT and BOOTSTRAP
+Here, we will evaluate the predictive performance of various survival models 
+using a holdout approach. We will split the data into a training set (80%) and a 
+test set (20%), fit the models on the training set, and then evaluate their 
+performance on the test set. We repeated this 5 times to ensure robustness of 
+the results. The data splits used here match the ones used in the 5-fold 
+cross-validation results. For each data split, bootstrap samples of the test set
+will be generated to estimate the uncertainty of the estimated C-index values. 
 
+### Model hyperparameters
 
-#### DeepSurv test/train splits:
-
-
-For the hyperparameters of deep learning models that have been trained with survivalmodels package is relevant to look at the pytorch optimizer: https://raphaels1.github.io/survivalmodels/reference/get_pycox_optim.html 
+For the hyperparameters of deep learning models that have been trained with 
+`survivalmodels` package is relevant to look at the pytorch optimizer: https://raphaels1.github.io/survivalmodels/reference/get_pycox_optim.html 
 
 Also the parameters for each model:
+
 1) Deephit: https://raphaels1.github.io/survivalmodels/reference/deephit.html
 2) DeepSurv: https://raphaels1.github.io/survivalmodels/reference/deepsurv.html
 3) CoxTime: https://raphaels1.github.io/survivalmodels/reference/coxtime.html
+
+In our analysis, we consider the same hyperparameter values used when analysing
+the METABRIC in the original publications for DeepHit, DeepSurv, and CoxTime. 
+For RSF, we use the default hyperparameters from the `randomForestSRC` package.
+
+[CAV: Bego is this correct?]
 
 \begin{table}[ht]
 \centering
 \begin{tabular}{@{}lccc@{}}
 \toprule
-\textbf{Hyper-parameter}     & \textbf{DeepSurv} & \textbf{CoxTime} & \textbf{DeepHit}  & RandomForest \\ \midrule
+\textbf{Hyper-parameter}     & \textbf{DeepSurv} & \textbf{CoxTime} & \textbf{DeepHit}  & RSF \\ \midrule
 Optimizer                    & adam              & adam             & adam              & NA \\
 Activation                   & selu              & relu             & relu              & NA\\
 \# Dense Layers              & 1                 & 2                & 2                 & - \\
@@ -125,6 +146,8 @@ cuts                         & NA                & NA               & 300       
 \caption{Hyperparameters across DeepSurv, CoxTime, and DeepHit models.}
 \label{tab:hyperparams_comparison}
 \end{table}
+
+### Model training
 
 
 ```{r, eval=FALSE}
