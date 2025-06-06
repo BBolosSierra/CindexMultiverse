@@ -1,7 +1,11 @@
 library(dplyr)
+library(tibble)
+library(tidyr)
 library(ggplot2)
 library(cowplot)
+library(GGally)
 
+# Load predictions across all folds
 folds_stacked_predictions <- 
   readRDS("./Results/5foldCV_MetabricStackedPredictions.rds")
 
@@ -43,48 +47,56 @@ em <- data.frame(
   RSF = emRSF
 )
 
-# PLot the expected mortality for each method
-library(GGally)
-em %>% ggpairs()
+# Add sample identifiers and fold information
+em <- em %>% 
+  rownames_to_column(var = "Sample") %>%
+  mutate(fold = substr(Sample, 1, 6)) %>%
+  arrange(fold)
 
-em[grepl("Fold 1", rownames(em)),] %>% ggpairs()
-em[grepl("Fold 2", rownames(em)),] %>% ggpairs()
-em[grepl("Fold 3", rownames(em)),] %>% ggpairs()
-em[grepl("Fold 4", rownames(em)),] %>% ggpairs()
-em[grepl("Fold 5", rownames(em)),] %>% ggpairs()
+# Calculate the number of infinite values per fold and method
+em %>%
+  group_by(fold) %>%
+  summarise(
+    CoxPH_inf = sum(is.infinite(CoxPH)),
+    CoxTime_inf = sum(is.infinite(CoxTime)),
+    DeepHit_inf = sum(is.infinite(DeepHit)),
+    DeepSurv_inf = sum(is.infinite(DeepSurv)),
+    RSF_inf = sum(is.infinite(RSF))
+  )
 
-em$fold <- substr(rownames(em), 1, 6)
+## As it can be seen above, there is a high number of infinite values for the 
+## CoxTime and DeepSurv methods. These correspond to cases in which the survival
+## function was predicted to be exactly equal to zero
+  
+# Plot the expected mortality for each method
+em %>% 
+  dplyr::select(CoxPH, CoxTime, DeepHit, DeepSurv, RSF) %>%
+  ggpairs()
 
-p1 <- em %>% 
-  ggplot(aes(x = fold, y = CoxPH)) +
+# As the plot above suggested multimodality for DeepHit, we now stratify by fold
+for(i in unique(em$fold)) {
+  cat("Fold:", i, "\n")
+  p <- em %>% filter(fold == i) %>% 
+    dplyr::select(CoxPH, CoxTime, DeepHit, DeepSurv, RSF) %>%
+    ggpairs() +
+    ggtitle(paste("Pairwise plots for fold", i))
+  print(p)
+}
+
+# Plot the distribution of expected mortality for each method across folds
+em_long <- em %>%
+  pivot_longer(cols = c(CoxPH, CoxTime, DeepHit, DeepSurv, RSF), 
+               names_to = "Method", values_to = "ExpectedMortality")
+
+em_long %>%
+  ggplot(aes(x = fold, y = ExpectedMortality, fill = fold)) +
   geom_violin() +
-  theme_minimal()
+  facet_wrap(~ Method) +
+  theme_minimal() +
+  labs(title = "Expected mortality distribution by method and fold")
 
-p2 <- em %>% 
-  ggplot(aes(x = fold, y = CoxTime)) +
-  geom_violin() +
-  theme_minimal()
-
-p3 <- em %>% 
-  ggplot(aes(x = fold, y = DeepHit)) +
-  geom_violin() +
-  theme_minimal()
-
-p4 <- em %>% 
-  ggplot(aes(x = fold, y = DeepSurv)) +
-  geom_violin() +
-  theme_minimal()
-
-p5 <- em %>% 
-  ggplot(aes(x = fold, y = RSF)) +
-  geom_violin() +
-  theme_minimal()
-
-p1 + p2 + p3 + p4 + p5 +
-  plot_layout(ncol = 2)
-
-
-mytimes <- as.numeric(gsub("CoxPH.", "", names(predCoxPH)))
+# Now we will plot the survival curves for a few samples
+mytimes <- as.numeric(gsub("CoxPH.", "", colnames(predCoxPH)))
 
 mypredplot <- function(i, mytimes, predCoxPH, predCoxTime, 
                        predRSF, predDeepHit, predDeepSurv) {
@@ -131,20 +143,6 @@ mypredplot(i = 3, mytimes,
 mypredplot(i = 4, mytimes, 
            predCoxPH, predCoxTime, 
            predRSF, predDeepHit, predDeepSurv)
-
-plot(mytimes, -log(predCoxPH[2,]), type = "l")
-lines(mytimes, -log(predCoxTime[2,]), col = "red")
-lines(mytimes, -log(predRSF[2,]), col = "red")
-lines(mytimes, -log(predRSF[2,]), col = "blue")
-lines(mytimes, -log(predDeepHit[2,]), col = "green")
-lines(mytimes, -log(predDeepSurv[2,]), col = "purple")
-
-plot(mytimes, as.vector(predCoxPH[1,]), type = "l")
-lines(mytimes, as.vector(predCoxPH[2,]), col = "red")
-
-# Calculate expected mortality
--sum(log(as.numeric(predCoxPH[1,])))
--sum(log(as.numeric(predCoxPH[2,])))
 
   
   
