@@ -112,6 +112,7 @@ mypredplot <- function(i, mytimes, predCoxPH, predCoxTime,
   legend("topright", legend = c("CoxPH", "CoxTime", "RSF", "DeepHit", "DeepSurv"),
          col = c("black", "red", "blue", "green", "purple"), lty = 1)
   
+  
   plot(mytimes, -log(predCoxPH[i,]), type = "l")
   lines(mytimes, -log(predCoxTime[i,]), col = "red")
   lines(mytimes, -log(predRSF[i,]), col = "red")
@@ -144,7 +145,7 @@ mypredplot(i = 4, mytimes,
            predCoxPH, predCoxTime, 
            predRSF, predDeepHit, predDeepSurv)
 
-n.sel <- 10
+n.sel <- 100
 ids1 <- em$Sample[em$fold == "Fold 1"][1:n.sel]
 ids2 <- em$Sample[em$fold == "Fold 2"][1:n.sel]
 ids3 <- em$Sample[em$fold == "Fold 3"][1:n.sel]
@@ -157,9 +158,9 @@ for(i in 2:n.sel) {
 }
 for(i in 1:n.sel) {
   lines(mytimes, predDeepHit[ids2[i],], col = "red")
-  lines(mytimes, predDeepHit[ids3[i],], col = "blue")
-  lines(mytimes, predDeepHit[ids4[i],], col = "green")
-  lines(mytimes, predDeepHit[ids5[i],], col = "purple")
+#  lines(mytimes, predDeepHit[ids3[i],], col = "blue")
+#  lines(mytimes, predDeepHit[ids4[i],], col = "green")
+#  lines(mytimes, predDeepHit[ids5[i],], col = "purple")
 }
 legend("topright", legend = c("Fold 1", "Fold 2", "Fold 3", "Fold 4", "Fold 5"),
        col = c("black", "red", "blue", "green", "purple"), lty = 1)
@@ -184,4 +185,7 @@ library(survminer)
 
 fit <- survfit(Surv(test_time, test_status) ~ as.factor(cv_fold), 
                data = folds_stacked_predictions)
-ggsurvplot(fit, data = folds_stacked_predictions, pval = FALSE, conf.int = FALSE)
+ggsurvplot(fit, data = folds_stacked_predictions, pval = FALSE, conf.int = TRUE)
+
+
+# Example from Sonabend et al paper
