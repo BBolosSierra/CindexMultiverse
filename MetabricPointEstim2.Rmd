@@ -1099,6 +1099,16 @@ p <- ggplot(df_plot, aes(x = Metric, y = cindex)) +
 
 print(p)
 ```
+```{r}
+hist(as.numeric(results_expm2[["ExpMort.RSF"]][["batch.metrics"]][, "pec::cindex"]))
+hist(as.numeric(results_expm2[["ExpMort.CoxPH"]][["batch.metrics"]][, "pec::cindex"]))
+hist(as.numeric(results_expm2[["ExpMort.DeepHit"]][["batch.metrics"]][, "pec::cindex"]))
+
+
+hist(as.numeric(results_surv[["RSF"]][["batch.metrics"]][, "pycox.Ant"]))
+hist(as.numeric(results_surv[["CoxPH"]][["batch.metrics"]][, "pycox.Ant"]))
+hist(as.numeric(results_surv[["DeepHit"]][["batch.metrics"]][, "pycox.Ant"]))
+```
 
 
 ```{r, fig.width=12, fig.height=6}
