@@ -189,3 +189,200 @@ ggsurvplot(fit, data = folds_stacked_predictions, pval = FALSE, conf.int = TRUE)
 
 
 # Example from Sonabend et al paper
+library(survival)
+library(ranger)
+library(distr6)
+library(mboost)
+library(mlr3proba)
+
+set.seed(20220109)
+
+## Get data and variables
+data = survival::rats
+data$sex = as.integer(data$sex == "f")
+train = sample(nrow(data), nrow(data) * 2/3)
+test = setdiff(seq(nrow(data)), train)
+test_unique_times = data$time[test]
+target = Surv(test_unique_times, data$status[test])
+target_train = Surv(data$time[train], data$status[train])
+
+## Train and predict
+cox = coxph(Surv(time, status) ~ ., data = data[train,])
+p_cox_lp = predict(cox, newdata = data[test,])
+p_cox_surv = survfit(cox, newdata = data[test,])
+p_ranger = predict(
+  ranger(Surv(time, status) ~ ., data = data[train, ]),
+  data = data[test, ]
+)
+p_gbm = predict(
+  blackboost(Surv(time, status) ~ ., data = data[train, ], family = Cindex()),
+  newdata = data[test, ]
+)
+
+# Define Antolini's C-index
+#  Copied from pycox
+#   https://github.com/havakv/pycox/blob/master/pycox/evaluation/concordance.py
+is_comparable = function(t_i, t_j, d_i, d_j) 
+  ((t_i < t_j) & d_i) | ((t_i == t_j) & (d_i | d_j))
+
+is_concordant = function(s_i, s_j, t_i, t_j, d_i, d_j)
+  (s_i < s_j) & is_comparable(t_i, t_j, d_i, d_j)
+
+sum_comparable = function(t, d) {
+  count = 0
+  for (i in seq_along(t)) {
+    for (j in seq_along(t)) {
+      if (j != i) {
+        count = count + is_comparable(t[i], t[j], d[i], d[j])
+      }
+    }
+  }
+  count
+}
+
+sum_concordant_disc = function(s, t, d, s_idx) {
+  count = 0
+  for (i in seq_along(t)) {
+    idx = s_idx[i]
+    for (j in seq_along(t)) {
+      if (j != i) {
+        count = count +
+          is_concordant(s[idx, i], s[idx, j], t[i], t[j], d[i], d[j])
+      }
+    }
+  }
+  count
+}
+
+# truth - Surv object corresponding to true survival outcomes
+# surv - predicted survival matrix (T x n)
+# surv_idx - 'surv_idx[i]' gives index in 'surv' corresponding to
+#   the event time of individual 'i'.
+antolini = function (truth, surv, surv_idx) {
+  durations = truth[, "time"]
+  events = truth[, "status"]
+  sum_concordant_disc(surv, durations, events, surv_idx) /
+    sum_comparable(durations, events)
+}
+
+## Calculative Cindex for CPH and GBM
+# Harrell
+harrell_cph = concordance(target ~ p_cox_lp, reverse = TRUE)$concordance
+harrell_rsf = NA
+harrell_gbm = concordance(target ~ p_gbm)$concordance
+
+# Uno
+uno_cph = concordance(target ~ p_cox_lp, reverse = TRUE, timewt = "n/G2")$concordance
+uno_rsf = NA
+uno_gbm = concordance(target ~ p_gbm, timewt = "n/G2")$concordance
+
+
+## Method 1 - Ensemble mortality - higher value = more deaths = higher risk
+ensemble_rsf = concordance(target ~ rowSums(p_ranger$chf), reverse = TRUE)$concordance
+ensemble_cph = concordance(target ~ rowSums(-log(t(p_cox_surv$surv))), reverse = TRUE)$concordance
+ensemble_gbm = NA
+
+# Ensemble mortality for rsf
+# This is based on the cumulative hazard function (CHF) of the RSF model
+# which is calculated at 26 time-points
+# These correspond to the unique non-censored times in the training set
+dim(p_ranger$chf)
+CHF_rsf <- p_ranger$chf
+EM_rsf <- rowSums(CHF_rsf)
+
+# Expected mortality for cox ph
+# This is calculated based on the predicted survival function
+# which is calculated at 51 time-points
+# These correspond to the unique times (censored and non-censored) in the training set
+dim(p_cox_surv$surv)
+CHF_cox <- -log(t(p_cox_surv$surv))
+EM_cox <- rowSums(CHF_cox)
+
+# What if I restrict to only the CHF matching the 26 time-points as in RSF
+cph.times <- sort(unique(data[train,]$time))
+EM_cox_2 <- rowSums(CHF_cox[,which(cph.times %in% p_ranger$unique.death.times)])
+EM_cox_3 <- rowSums(CHF_cox[,-which(cph.times %in% p_ranger$unique.death.times)])
+
+plot(EM_cox_2 / EM_cox)
+plot(EM_cox_3 / EM_cox)
+
+plot((EM_cox_2 + EM_cox_3) / EM_cox)
+
+# Nelson-Aalen estimator CHF
+
+fit <- survfit(Surv(time, status) ~ 1, data = data[test,])
+naest1 <- cumsum(fit$n.event/fit$n.risk)
+
+## Method 2 - Antolini
+antolini_rsf = antolini(
+  target, t(p_ranger$survival),
+  findInterval(target[, "time"], p_ranger$unique.death.times, all.inside = TRUE)
+)
+antolini_cph = antolini(
+  target, p_cox_surv$surv,
+  findInterval(target[, "time"], p_cox_surv$time, all.inside = TRUE)
+)
+antolini_gbm = NA
+
+
+## Method 3 - Distribution summary (no extrapolation)
+cox_surv = t(p_cox_surv$surv)
+colnames(cox_surv) = p_cox_surv$time
+ranger_surv = p_ranger$survival
+colnames(ranger_surv) = p_ranger$unique.death.times
+
+# Higher value = longer expected lifetime = lower risk - Absurd value due to improper distribution
+summary_naive_cph = concordance(target ~ distr6::as.Distribution(1 - cox_surv, fun = "cdf")$mean())$concordance
+summary_naive_rsf = concordance(target ~ distr6::as.Distribution(1 - ranger_surv, fun = "cdf")$mean())$concordance
+summary_naive_gbm = NA
+
+## Method 4 - Distribution summary (extrapolation)
+cox_surv = cbind(1, cox_surv, 0) # Add probabilities 1 and 0
+colnames(cox_surv)[1] = "0"
+colnames(cox_surv)[ncol(cox_surv)] = tail(p_cox_surv$time, 1) + 1e-3
+ranger_surv = cbind(1, ranger_surv, 0) # Add probabilities 1 and 0
+colnames(ranger_surv)[1] = "0"
+colnames(ranger_surv)[ncol(ranger_surv)] = tail(p_ranger$unique.death.times, 1) + 1e-3
+
+summary_extr_cph = concordance(target ~ distr6::as.Distribution(1 - cox_surv, fun = "cdf")$mean())$concordance
+summary_extr_rsf = concordance(target ~ distr6::as.Distribution(1 - ranger_surv, fun = "cdf")$mean())$concordance
+summary_extr_gbm = NA
+
+## Method 5 - Single probability comparison
+distr_cox = distr6::as.Distribution(1 - cox_surv, fun = "cdf")
+distr_rsf = distr6::as.Distribution(1 - ranger_surv, fun = "cdf")
+
+# survival - higher value = higher prob survival = lower risk
+cox_prob_concordance = rsf_prob_concordance = numeric(nrow(p_cox_surv$surv))
+for (i in seq_along(cox_prob_concordance)) {
+  cox_prob_concordance[i] = concordance(target ~ p_cox_surv$surv[i, ])$concordance
+}
+for (i in seq_along(rsf_prob_concordance)) {
+  rsf_prob_concordance[i] = concordance(target ~ p_ranger$survival[, i])$concordance
+}
+
+rsf_max = which.max(rsf_prob_concordance)
+rsf_min = which.min(rsf_prob_concordance)
+rsf_rand = sample(seq_along(rsf_prob_concordance), 1)
+
+prob_cph = cox_prob_concordance[c(rsf_min, rsf_max, rsf_rand)]
+prob_rsf = rsf_prob_concordance[c(rsf_min, rsf_max, rsf_rand)]
+prob_gbm = rep(NA, 3)
+
+matrix(c(
+  harrell_cph, harrell_rsf, harrell_gbm,
+  uno_cph, uno_rsf, uno_gbm,
+  antolini_cph, antolini_rsf, antolini_gbm,
+  prob_cph[1], prob_rsf[1], prob_gbm[1],
+  prob_cph[2], prob_rsf[2], prob_gbm[2],
+  prob_cph[3], prob_rsf[3], prob_gbm[3],
+  summary_naive_cph, summary_naive_rsf, summary_naive_gbm,
+  summary_extr_cph, summary_extr_rsf, summary_extr_gbm,
+  ensemble_cph, ensemble_rsf, ensemble_gbm
+),
+ncol = 3, byrow = TRUE,
+dimnames = list(c(
+  "Harrell", "Uno", "Antolini", "Prob (min)", "Prob (max)",
+  "Prob (rand)", "Summary (naive)", "Summary (extr)", "Ensemble"
+), c("CPH", "RSF", "GBM"))
+)
