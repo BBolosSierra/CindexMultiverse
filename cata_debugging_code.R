@@ -144,6 +144,44 @@ mypredplot(i = 4, mytimes,
            predCoxPH, predCoxTime, 
            predRSF, predDeepHit, predDeepSurv)
 
-  
-  
-  
+n.sel <- 10
+ids1 <- em$Sample[em$fold == "Fold 1"][1:n.sel]
+ids2 <- em$Sample[em$fold == "Fold 2"][1:n.sel]
+ids3 <- em$Sample[em$fold == "Fold 3"][1:n.sel]
+ids4 <- em$Sample[em$fold == "Fold 4"][1:n.sel]
+ids5 <- em$Sample[em$fold == "Fold 5"][1:n.sel]
+
+plot(mytimes, predDeepHit[ids1[1],], type = "l")
+for(i in 2:n.sel) {
+  lines(mytimes, predDeepHit[ids1[i],])
+}
+for(i in 1:n.sel) {
+  lines(mytimes, predDeepHit[ids2[i],], col = "red")
+  lines(mytimes, predDeepHit[ids3[i],], col = "blue")
+  lines(mytimes, predDeepHit[ids4[i],], col = "green")
+  lines(mytimes, predDeepHit[ids5[i],], col = "purple")
+}
+legend("topright", legend = c("Fold 1", "Fold 2", "Fold 3", "Fold 4", "Fold 5"),
+       col = c("black", "red", "blue", "green", "purple"), lty = 1)
+
+
+# Maximum times per fold
+folds_stacked_predictions %>%
+  group_by(cv_fold) %>%
+  summarise(max_time = max(test_time),
+            max_obs_time = max(test_time[test_status == 1])) %>%
+  arrange(cv_fold)
+
+
+folds_stacked_predictions %>%
+  ggplot(aes(x = as.factor(cv_fold), y = test_time, fill = as.factor(cv_fold))) +
+  geom_violin() +
+  theme_minimal() +
+  labs(title = "Distribution of survival times by fold")
+
+library(survival)
+library(survminer)
+
+fit <- survfit(Surv(test_time, test_status) ~ as.factor(cv_fold), 
+               data = folds_stacked_predictions)
+ggsurvplot(fit, data = folds_stacked_predictions, pval = FALSE, conf.int = FALSE)
