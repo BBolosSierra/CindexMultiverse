@@ -6,20 +6,32 @@ date: "2025-05-20"
 
 ## Concordance index multiverse.
 
-Three ways of getting the data.
-1) Downloading from DeepSurv
-Load libraries
+We have used for our analysis the METABRI: The Molecular Taxonomy of Breast Cancer International Consortium (METABRIC) dataset. The dataset is available in pycox from DeepSurv Github (https://github.com/jaredleekatzman/DeepSurv/). 
+However, there are two main reason for which we have decided to download from cBioportal and preprocess the data: 
+1) Covariate names from pycox are label as X1, ... X9. Although by extracting the means of continuous variables and the counts of categorical variables, it is possible to match which covariates are the gene expression or treatment options. However, to match we require to download the orginal dataset, and therefore, DeepSurv dataset is not required. 
+2) DeepSurv dataset (or pycox), have 1904 patients without missing values. However, we have 1937 patients without missing values. Therefore, some preprocessing must have been carried out in DeepSurv, but we have not been able to find any information about which steps led to the removal of 33 patients. 
 
-```{r, include=FALSE}
+In this code, we download both and compare basic characteristics. We encourage the direct download from original sources. 
+
+
+```{r load libraries}
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("cBioPortalData")
+
+library(cBioPortalData)
 library(rhdf5)
 library(tidyr)
 library(data.table)
 library(dplyr)
+library(gtsummary)
+
 ```
 
 ### 1) Downloading the data from DeepSurv and DeSurv:
 
-```{r}
+```{r download deepsurv Metabric version}
 
 # Metabric dataset from DeepSurv
 url = "https://github.com/jaredleekatzman/DeepSurv/raw/refs/heads/master/experiments/data/metabric/metabric_IHC4_clinical_train_test.h5"
@@ -66,13 +78,7 @@ Pereira et al. Nat Commun 2016, Rueda et al. Nature 2019, Curtis et al. Nature 2
 
 Accessed on 21/May/2025
 
-```{r}
-# if (!require("BiocManager", quietly = TRUE))
-#     install.packages("BiocManager")
-# 
-# BiocManager::install("cBioPortalData")
-
-library(cBioPortalData)
+```{r load clinical data Cbioportal}
 
 cbio <- cBioPortal()
 
@@ -89,7 +95,7 @@ head(clinical_data)
 sampleId <- clinical_data$sampleId
 ```
 
-```{r}
+```{r load expression Cbioportal}
 # Find molecular profiles for METABRIC
 profiles <- molecularProfiles(api = cbio, studyId = study$studyId)
 
@@ -109,7 +115,7 @@ head(expression_data$brca_metabric_mrna)
 ```
 
 
-```{r}
+```{r merge clinical and expression}
 # extract with right format
 df <- expression_data$brca_metabric_mrna %>%
   pivot_wider(id_cols = patientId,
@@ -153,9 +159,10 @@ head(mb2)
 
 ### 3) Manual download from cbioportal and linkage:
 
-If you were to run the following chunk, it is necessary to download the data from cbioportal:
+Alternatively, it is possible to download the compressed file that contains all the METABRIC data from cbioportal. 
+Then the following code could be used to get the final dataset.
 
-```{r, eval=FALSE}
+```{r manual download and gene expression subset, eval=FALSE}
 # Expression MKI67, EGFR, PGR, and ERBB2
 expression <- fread("../Cindex/Datasets/brca_metabric/data_mrna_illumina_microarray.txt",
                        header = TRUE, 
@@ -176,7 +183,7 @@ expr_subset$PATIENT_ID <- rownames(expr_subset)
 ```
 
 
-```{r, eval=TRUE}
+```{r manual merge, eval=TRUE}
 # Reducing it to the interestings genes
 # For the whole expression dataset please download from cBioportal
 #write.table(expr_subset, "./Datasets/brca_metabric/subset_data_mrna_illumina_microarray.txt",
@@ -228,22 +235,14 @@ head(mb)
 ```
 
 
-```{r}
+### Summary tables
+
+```{r compare outcomes}
 table(mb2$OS_STATUS)
-```
-
-```{r}
-table(mb$OS_STATUS)
-```
-
-```{r}
 table(mb_deepsurv$status)
 ```
 
-### Summary tables
-
-```{r}
-library(gtsummary)
+```{r deepsurv characterization table}
 
 mb_deepsurv[c("X5", "X6", "X7", "X8")] <- lapply(mb_deepsurv[c("X5", "X6", "X7", "X8")], as.factor)
 
@@ -256,10 +255,9 @@ mb_deepsurv[c("X5", "X6", "X7", "X8")] <- lapply(mb_deepsurv[c("X5", "X6", "X7",
 
 
 ```
-```{r}
 
+```{r original source characterization table}
 ## recode to categorical 0/1
-
 cols_to_recode <- c("HORMONE_THERAPY", "RADIO_THERAPY", "CHEMOTHERAPY", "ER_IHC", "OS_STATUS")
 genes_of_interest <- c("MKI67", "EGFR", "PGR", "ERBB2")
 
@@ -283,31 +281,12 @@ mb2[genes_of_interest] <- lapply(mb2[genes_of_interest], as.numeric)
   ))
  
 ```
-```{r}
-mb[cols_to_recode] <- lapply(mb[cols_to_recode], function(col) {
-  ifelse(col %in% c("YES", "Positve", "1:DECEASED"), 1, ## not positive... typo
-         ifelse(col %in% c("NO", "Negative", "0:LIVING"), 0, NA))
-})
 
-mb[cols_to_recode] <- lapply(mb[cols_to_recode], as.factor)
- mb[, c(2:12)] %>% 
-  tbl_summary(
-    by = OS_STATUS,
-    statistic = list(all_continuous() ~ "{mean} ({sd})",
-                     all_categorical() ~ "{n} ({p}%)"
-  ))
-```
-
-```{r, eval=FALSE}
+```{r save merged dataset, eval=FALSE}
 #write.csv(mb2, "./Datasets/metabric_preprocess_multiverse.csv", row.names = FALSE)
 ```
 
-```{r}
-library(dplyr)
-library(stringr)
-library(knitr)
-
-
+```{r save as latex}
 summary_table <- mb2[, c(2:12)] %>% 
   tbl_summary(
     by = OS_STATUS,
@@ -318,10 +297,7 @@ summary_table <- mb2[, c(2:12)] %>%
 
 latex_code <- summary_table %>%
   as_kable(format = "latex", booktabs = TRUE, caption = "Summary Table by Overall Survival Status", label = "tab:summary")
-```
 
-
-```{r, eval=FALSE}
 #writeLines(latex_code, "./Paper/Tables/MetabricSummaryTable.tex")
 ```
 

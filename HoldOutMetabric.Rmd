@@ -37,7 +37,8 @@ library(furrr)
 # install.packages("./pysurvivalR.tar.gz", repos = NULL, type = "source")
 library(pysurvivalR)
 library(survivalmodels)
-library(mlr3)
+library(dplyr)
+library(tidyr)
 ```
 
 
@@ -69,7 +70,7 @@ source("./CindexHelperFunctions.R")
 Here, we load the pre-processed METABRIC data that was generated using the 
 `preprocessing_biocportal_metabric.R` script.
 
-```{r}
+```{r load data}
 # read the processed file
 mb <- read.table("./Datasets/metabric_preprocess_multiverse.csv", 
                  sep = "," , header = TRUE)
@@ -80,16 +81,31 @@ rownames(mb) <- mb$PATIENT_ID
 # Remove the id column
 mb <- mb[,2:12]
 
-# Store the previous colnames to keep track of them
-cols <- colnames(mb)
+# Mapping
+var_map <- c(
+  "MKI67" = "X1",
+  "EGFR" = "X2",
+  "ERBB2" = "X3",
+  "PGR" = "X4",
+  "HORMONE_THERAPY" = "X5",
+  "RADIO_THERAPY" = "X6",
+  "CHEMOTHERAPY" = "X7",
+  "ER_IHC" = "X8",
+  "AGE_AT_DIAGNOSIS" = "X9",
+  "OS_MONTHS" = "time",
+  "OS_STATUS" = "status"
+)
 
-# Assign new column names
-newcols <- c("X1", "X2", "X3", "X4","X5", "X6", "X7", "X8", "X9", "time", "status")
-colnames(mb) <- newcols
+# Mapping colnames
+names(mb)[names(mb) %in% names(var_map)] <- var_map[names(mb)[names(mb) %in% names(var_map)]]
 
-# Summary statistics for the survival times
+
 summary(mb$time)
+
+
+#mb <- mb[order(mb$time, -mb$status),]
 ```
+
 
 The data contains information about `r nrow(mb)` individuals, with 
 `r sum(mb$status == 1)` events and `r sum(mb$status == 0)` censored 
@@ -153,10 +169,9 @@ Rds file which we load here. We can use the results from 5-fold cross-validation
 
 
 ```{r load results}
-folds_stacked_predictions <- 
-  readRDS("./Results/5foldCV_MetabricStackedPredictions.rds")
+folds_stacked_predictions <-  readRDS("./Results/5FoldStackedPredictions.rds")
 
-survival_curves <- readRDS("./Results/5foldCV_MetabricSurvivalCurves.rds")
+survival_curves <- readRDS("./Results/5FoldStackedPredictionsCurves.rds")
 ```
 
 [CAV: have you saved `survival_curves` too? The chunk related to model fitting
@@ -167,24 +182,9 @@ have all the code needed to run it].
 
 Run the following if were to train on a random split. 
 
-```{r, eval=FALSE}
 
-# We could keep the same folds and indices since the dataframes are the same
-# Number of folds
-#K <- 5 
-n <- nrow(mb)  
-# R <- 1
-# Interesting times for comparison
-all_predictions <- list()
-survival_curves <- list()
-#numeric_cols <- c("X1", "X2", "X3", "X4","X5", "X6", "X7", "X8", "X9")
-numeric_cols <- c("X1", "X2", "X3", "X4", "X9")
-#seed <- sample(1:1e6, 1)
-#set.seed(seed)
-
-
-#reticulate::py_run_string("import torch; torch.manual_seed(42)")
-
+```{r model predictions, eval=FALSE}
+## Reproducibility
 reset_torch_seed <- function(seed = 123) {
   reticulate::py_run_string(sprintf("
 import torch
@@ -199,215 +199,247 @@ torch.backends.cudnn.benchmark = False
 }
 
 set.seed(123)
-survivalmodels::set_seed(seed_R=123, seed_np = 123, seed_torch = 123) ## important for reproducibility
-# If we do not need to preserve the censoring/event proportions per fold iteration
+survivalmodels::set_seed(seed_R=123, seed_np = 123, seed_torch = 123) 
+
+### Crossval
+# Number of folds
+K <- 5 
+n <- nrow(mb)  
+
+# Interesting times for comparison
+#ts <- sort(unique(round(mb$time)))
+all_predictions <- list()
+
+# List of numeric column for standarization
+numeric_cols <- c("X1", "X2", "X3", "X4", "X9")
+
+# Create empty list for survival curves
+survival_curves <- vector("list", K)
+
+# Shuffle indices and create folds
 #indices <- sample(seq_len(n))
 #folds <- cut(indices, breaks = K, labels = FALSE)
+folds <- createFolds(mb$status, k = K, list = TRUE) # return test sets
 
-#survival_curves[[r]] <- vector("list", K)
+# Interesting intervals for prediction
+mb_t_max <- round(max(mb$time))
+ts_scaled <- seq(0, mb_t_max, 1)
 
-train_idx <- sample(1:n, size = floor(0.8 * n))
-mb_train  <- mb[train_idx, ]
-mb_test   <- mb[-train_idx,]
+for (k in 1:K) {
 
-t_train_max <- max(mb$time)
-# Scale continuous 
-means <- sapply(mb_train[, numeric_cols], mean)
-sds   <- sapply(mb_train[, numeric_cols], sd)
+  # Define test and training indices
+  #mb_test_idx  <- which(folds == k)
+  #mb_train_idx <- setdiff(seq_len(n), mb_test_idx)
+  
+  # Define test and training indices
+  mb_test_idx  <- folds[[k]]
+  mb_train_idx <- setdiff(seq_len(nrow(mb)), mb_test_idx)
+  
+  # Subset the dataset
+  mb_train <- mb[mb_train_idx, ]
+  mb_test  <- mb[mb_test_idx, ]
+  
+  t_train_max <- max(mb_train$time)
+  
+  # Scale continuous 
+  means <- sapply(mb_train[, numeric_cols], mean)
+  sds   <- sapply(mb_train[, numeric_cols], sd)
 
-mb_train[, numeric_cols] <- scale(mb_train[, numeric_cols], center = means, scale = sds)
-mb_test[, numeric_cols]  <- scale(mb_test[, numeric_cols], center = means, scale = sds)
+  mb_train[, numeric_cols] <- scale(mb_train[, numeric_cols],
+                                    center = means, scale = sds)
+  mb_test[, numeric_cols]  <- scale(mb_test[, numeric_cols],
+                                    center = means, scale = sds)
 
-#t_train_max <- max(mb_train$time)
-mb_train$time <- mb_train$time / t_train_max
-mb_test$time <- mb_test$time / t_train_max
+  mb_train$time <- mb_train$time
+  mb_test$time <- mb_test$time
+  
+  # Extract only the covariates used for predictions
+  test_covariates <- mb_test[, c("X1", "X2", "X3", "X4",
+                                 "X5", "X6", "X7", "X8", "X9")]
 
-ts <- sort(unique(mb_test$time))
-# Extract only the covariates used for predictions
-test_covariates <- mb_test[, c("X1", "X2", "X3", "X4",
-                               "X5", "X6", "X7", "X8", "X9")]
-# intervals for prediction with scaling
-ts_scaled <- seq(0, round(t_train_max), 1)
-approx_seq <- ts_scaled / t_train_max
+  # Fit models
+  #cat("Dataset:", i, ".", j, '\n')
+  cat("Fold:", k, '\n')
+  cat("tmax:", t_train_max, "\n")
+  cat('Train set dimensions:', dim(mb_train), '\n')
+  cat('Train set event:', mean(mb_train$status == 1)*100, '\n')
+  cat('Train set censoring:', mean(mb_train$status == 0)*100, '\n')
+  cat('Test set dimensions:', dim(mb_test), '\n')
+  cat('Test set event:', mean(mb_test$status == 1)*100, '\n')
+  cat('Test set censoring:', mean(mb_test$status == 0)*100, '\n')
+  cat('\n')
+  
+  # 1) Random Forest:
+  # Fit the model
+  rf <- randomForestSRC::rfsrc(Surv(time, status) ~ X1 + X2 +
+                                 X3 + X4 + X5 + X6 + 
+                                 X7 + X8 + X9, 
+                               data = mb_train, 
+                               ntree = 100, 
+                               ntime = 1400)
+  # Predict survival object
+  surv_rf_object <- predict(rf, newdata = mb_test, type = "surv")
+  surv_rf <- surv_rf_object$survival
+  time_grid <- surv_rf_object$time.interest
+  # Interpolate to have same times in all survival curves
+  surv_rf_int <- apply(surv_rf, 1, function(s){
+    approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
+  })
+  surv_rf_int <- t(surv_rf_int)
+  rownames(surv_rf_int) <- rownames(mb_test)
+  colnames(surv_rf_int) <- ts_scaled
+  # Calculate expected mortality
+  second_smallest_survival_prob = unique(sort(as.vector(surv_rf_int), partial = 2))[2]/10
+  rf_exp_mort <- rowSums(-log(pmax(surv_rf_int, second_smallest_survival_prob)))
+  rf_exp_mort_arb <- rowSums(-log(pmax(surv_rf_int, 1e-10)))
+  rf_exp_mort_cut <- rowSums(-log(pmax(surv_rf_int[, 1:121])))
+  
+  # 2) Predict risk Cox PH
+  # Fit with cox ph 
+  cox_ph <- survival::coxph(Surv(time, status) ~ X1 + X2 + 
+                             X3 + X4 + X5 + X6 + 
+                             X7 + X8 + X9, 
+                               data = mb_train)
+  
+  # Predict survival object
+  sf <- survfit(cox_ph, newdata = mb_test)
+  surv_cox <- t(sf$surv)
+  time_grid <- sf$time 
+  #Interpolate
+  surv_cox_int <- apply(surv_cox, 1, function(s){
+     approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
+  })
+  
+  surv_cox_int <- t(surv_cox_int)
+  rownames(surv_cox_int) <- rownames(mb_test)
+  colnames(surv_cox_int)  <- ts_scaled
+  # Calculate expected mortality
+  second_smallest_survival_prob = unique(sort(as.vector(surv_cox_int), partial = 2))[2]/10
+  cox_exp_mort <- rowSums(-log(pmax(surv_cox_int, second_smallest_survival_prob)))
+  cox_exp_mort_arb <- rowSums(-log(pmax(surv_cox_int, 1e-10)))
+  cox_exp_mort_cut <- rowSums(-log(pmax(surv_cox_int[,  1:121])))
 
-# Fit models
-#cat("Dataset:", i, ".", j, '\n')
-#cat("Seed: ", seed, '\n')
-#cat("Repetition ", r, '\n')
-cat('Train set dimensions:', dim(mb_train), '\n')
-cat('Train set event:', mean(mb_train$status == 1)*100, '\n')
-cat('Train set censoring:', mean(mb_train$status == 0)*100, '\n')
-cat('Test set dimensions:', dim(mb_test), '\n')
-cat('Train set event:', mean(mb_test$status == 1)*100, '\n')
-cat('Test set censoring:', mean(mb_test$status == 0)*100, '\n')
-cat('\n')
-
-
-# 1) Random Forest:
-# Fit the model
-rf <- randomForestSRC::rfsrc(Surv(time, status) ~ X1 + X2 +
-                               X3 + X4 + X5 + X6 + 
-                               X7 + X8 + X9, 
-                             data = mb_train, ntree = 100)
-# Predict survival object
-surv_rf_object <- predict(rf, newdata = mb_test, type = "surv")
-surv_rf <- surv_rf_object$survival
-time_grid <- surv_rf_object$time.interest# * t_train_max
-# Interpolate to have same times in all survival curves
-surv_rf_int <- apply(surv_rf, 1, function(s){
-  approx(x = time_grid, y=s, xout = approx_seq, rule = 2)$y
-})
-surv_rf_int <- t(surv_rf_int)
-rownames(surv_rf_int) <- rownames(mb_test)
-colnames(surv_rf_int) <- ts_scaled
-# Calculate expected mortality
-rf_exp_mort <- rowSums(-log(pmax(surv_rf_int, 1e-10)))
-
-
-# 2) Predict risk Cox PH
-# Fit with cox ph 
-cox_ph <- survival::coxph(Surv(time, status) ~ X1 + X2 + 
-                           X3 + X4 + X5 + X6 + 
-                           X7 + X8 + X9, 
-                             data = mb_train)
-
-# Predict survival object
-sf <- survfit(cox_ph, newdata = mb_test)
-surv_cox <- t(sf$surv)
-time_grid <- sf$time #* t_train_max
-#Interpolate
-surv_cox_int <- apply(surv_cox, 1, function(s){
-   approx(x = time_grid, y=s, xout = approx_seq, rule = 2)$y
-})
-
-surv_cox_int <- t(surv_cox_int)
-rownames(surv_cox_int) <- rownames(mb_test)
-colnames(surv_cox_int)  <- ts_scaled
-# Calculate expected mortality
-cox_exp_mort <- rowSums(-log(pmax(surv_cox_int, 1e-10)))
-
-reset_torch_seed()
-
-# 3) DeepSurv
-# Hyperparameters: https://github.com/jaredleekatzman/DeepSurv/blob/41eed003e5b892c81e7855e400861fa7a2d9da4f/experiments/deepsurv/models/metabric_IHC4_clinical_adam_0.json
-deepsurv_model <- survivalmodels::deepsurv(Surv(time, status) ~ 
-                                             X1 + X2 + 
-                                             X3 + X4 + X5 + X6 + 
-                                             X7 + X8 + X9, 
+  reset_torch_seed()
+  
+  # 3) DeepSurv
+  # Hyperparameters: https://github.com/jaredleekatzman/DeepSurv/blob/41eed003e5b892c81e7855e400861fa7a2d9da4f/experiments/deepsurv/models/metabric_IHC4_clinical_adam_0.json
+  deepsurv_model <- survivalmodels::deepsurv(Surv(time, status) ~ 
+                                               X1 + X2 + 
+                                               X3 + X4 + X5 + X6 + 
+                                               X7 + X8 + X9, 
+                                             data = mb_train, 
+                                             frac = 0.2, 
+                                             dropout = 0.160087890625,
+                                             optimizer = "adam",
+                                             activation = "selu", 
+                                             batch_norm = TRUE,
+                                             num_nodes = c(41), 
+                                             batch_size = 256L, 
+                                             learning_rate = 0.010289691253027908, 
+                                             lr_decay = 0.0041685546875, 
+                                             momentum =  0.8439658203125,
+                                             #weight_decay = 10.890986328125, # this is too high it cannot be 
+                                             epochs = 500) 
+  # Predict survival object
+  surv_deepsurv <- predict(deepsurv_model,
+                           newdata = mb_test, type = "surv")
+  time_grid <- as.numeric(colnames(surv_deepsurv))
+  # Interpolate
+  surv_deepsurv_int <- apply(surv_deepsurv, 1, function(s){
+    approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
+  })
+  surv_deepsurv_int <- t(surv_deepsurv_int)
+  rownames(surv_deepsurv_int) <- rownames(mb_test)
+  colnames(surv_deepsurv_int) <- ts_scaled
+  # Calculate expected mortality
+  second_smallest_survival_prob = unique(sort(as.vector(surv_deepsurv_int), partial = 2))[2]/10
+  deepsurv_exp_mort <- rowSums(-log(pmax(surv_deepsurv_int,second_smallest_survival_prob)))
+  deepsurv_exp_mort_arb <- rowSums(-log(pmax(surv_deepsurv_int, 1e-10)))
+  deepsurv_exp_mort_cut <- rowSums(-log(pmax(surv_deepsurv_int[, 1:121])))
+  
+  reset_torch_seed()
+  # 4) Coxtime
+  # Hyperparameters from:
+  # https://github.com/havakv/pycox/blob/3eccdd7fd9844a060f50fdcc315659f33a2d2dc1/examples/cox-time.ipynb
+  coxtime_model <- survivalmodels::coxtime(Surv(time, status) ~ 
+                                             X1 + X2 + X3 + 
+                                             X4 + X5 + X6 + 
+                                              X7 + X8 + X9, 
                                            data = mb_train, 
-                                           frac = 0.2, 
-                                           dropout = 0.160087890625,
                                            optimizer = "adam",
-                                           activation = "selu", 
+                                           learning_rate = 0.01,       
+                                           betas = c(0.9, 0.999), # defaults
+                                           activation = "relu",
+                                           num_nodes = c(32L, 32L),
                                            batch_norm = TRUE,
-                                           num_nodes = c(41), 
-                                           #verbose = TRUE,
-                                           batch_size = 256L, # ? default, nowhere to be found
-                                           learning_rate = 0.010289691253027908, 
-                                           lr_decay = 0.0041685546875, 
-                                           momentum =  0.8439658203125,# if adam this is not used, is used for sgd
-                                           #weight_decay = 1.269e-3, # ? weight_decay > 0 for L2 regularization
-                                           #weight_decay = 10.890986328125, # this is too high it cannot be 
-                                           epochs = 500) 
-# Predict survival object
-surv_deepsurv <- predict(deepsurv_model,
-                         newdata = mb_test, type = "surv")
-time_grid <- as.numeric(colnames(surv_deepsurv))# * t_train_max
+                                           dropout = 0.1,
+                                           batch_size = 256,
+                                           epochs = 512,
+                                           early_stopping = TRUE, 
+                                           frac = 0.2)
+  
+  # Predict survival object
+  surv_coxtime <- predict(coxtime_model,
+                          newdata = mb_test, type = "surv")
+  time_grid <-  as.numeric(colnames(surv_coxtime))
+  # Interpolate
+  surv_coxtime_int <- apply(surv_coxtime, 1, function(s){
+    approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
+  })
+  surv_coxtime_int <- t(surv_coxtime_int)
+  rownames(surv_coxtime_int) <- rownames(mb_test)
+  colnames(surv_coxtime_int) <- ts_scaled
+  # Calculate expected mortality
+  second_smallest_survival_prob = unique(sort(as.vector(surv_coxtime_int), partial = 2))[2]/10
+  coxtime_exp_mort <- rowSums(-log(pmax(surv_coxtime_int, second_smallest_survival_prob)))
+  coxtime_exp_mort_arb <- rowSums(-log(pmax(surv_coxtime_int, 1e-10)))
+  coxtime_exp_mort_cut <- rowSums(-log(pmax(surv_coxtime_int[, 1:121])))
+  
+  reset_torch_seed()
+  
+  # 5) Deephit
+  # Hyperparameters: https://github.com/havakv/pycox/blob/3eccdd7fd9844a060f50fdcc315659f33a2d2dc1/examples/deephit.ipynb and DeepHit paper, and also double checked with DeSurv paper (some parameters are slightly different)
+  deephit_model <- survivalmodels::deephit(Surv(time, status) ~ 
+                             X1 + X2 + 
+                             X3 + X4 + X5 + X6 + 
+                             X7 + X8 + X9, 
+                             data = mb_train, 
+                             optimizer = "adam",
+                             activation = "relu", # in DeSurv, ipynb
+                             num_nodes = c(32L, 32L), # in ipynb and DeSurv
+                             batch_norm = TRUE, # in ipynb
+                             dropout = 0.6, #  0.1 in ipynb and 0.6 in DeepHit paper
+                             cuts = 1400, # in DeSurv and DeepHit, 10 and interpolation in ipynb
+                             mod_alpha = 0.2, # in DeSurv, ipynb
+                             early_stopping = TRUE, # in DeepHit and ipynb
+                             #tolerance = 3,
+                             sigma = 0.1, # in DeSurv and ipynb
+                             batch_size = 50, # 50 in Deephit, 256 in ipynb
+                             epochs = 100, # in ipynb
+                             #verbose = TRUE,
+                             learning_rate = 0.001, # 0.001 in Deephit, 0.01 in ipynb
+                             #betas = c(0.9, 0.999), # default adam
+                             frac = 0.2) # validation 
 
-# Interpolate
-surv_deepsurv_int <- apply(surv_deepsurv, 1, function(s){
-  approx(x = time_grid, y=s, xout = approx_seq, rule = 2)$y
-})
-surv_deepsurv_int <- t(surv_deepsurv_int)
-rownames(surv_deepsurv_int) <- rownames(mb_test)
-colnames(surv_deepsurv_int) <- ts_scaled
-# Calculate expected mortality
-deepsurv_exp_mort <- rowSums(-log(pmax(surv_deepsurv_int, 1e-10)))
-
-reset_torch_seed()
-
-# 4) Coxtime
-# Hyperparameters from:
-# https://github.com/havakv/pycox/blob/3eccdd7fd9844a060f50fdcc315659f33a2d2dc1/examples/cox-time.ipynb
-coxtime_model <- survivalmodels::coxtime(Surv(time, status) ~ 
-                                           X1 + X2 + X3 + 
-                                           X4 + X5 + X6 + 
-                                            X7 + X8 + X9, 
-                                         data = mb_train, 
-                                         optimizer = "adam",
-                                         learning_rate = 0.01,       
-                                         betas = c(0.9, 0.999), # defaults
-                                         activation = "relu",
-                                         num_nodes = c(32L, 32L),
-                                         batch_norm = TRUE,
-                                         dropout = 0.1,
-                                         batch_size = 256,
-                                         epochs = 512,
-                                         early_stopping = TRUE, 
-                                         frac = 0.2)
-
-# Predict survival object
-surv_coxtime <- predict(coxtime_model,
-                        newdata = mb_test, type = "surv")
-time_grid <-  as.numeric(colnames(surv_coxtime))# * t_train_max
-# Interpolate
-surv_coxtime_int <- apply(surv_coxtime, 1, function(s){
-  approx(x = time_grid, y=s, xout = approx_seq, rule = 2)$y
-})
-surv_coxtime_int <- t(surv_coxtime_int)
-rownames(surv_coxtime_int) <- rownames(mb_test)
-colnames(surv_coxtime_int) <- ts_scaled
-# Calculate expected mortality
-coxtime_exp_mort <- rowSums(-log(pmax(surv_coxtime_int, 1e-10)))
-
-
-# scale back the train time too 
-mb_train$time <- mb_train$time * t_train_max
-mb_test$time <- mb_test$time * t_train_max
-
-reset_torch_seed()
-
-# 5) Deephit
-# Original scale for times applied 
-# Hyperparameters: https://github.com/havakv/pycox/blob/3eccdd7fd9844a060f50fdcc315659f33a2d2dc1/examples/deephit.ipynb and DeepHit paper, and also double checked with DeSurv paper (some parameters are slightly different)
-deephit_model <- survivalmodels::deephit(Surv(time, status) ~ 
-                           X1 + X2 + 
-                           X3 + X4 + X5 + X6 + 
-                           X7 + X8 + X9, 
-                           data = mb_train, 
-                           optimizer = "adam",
-                           activation = "relu", # in DeSurv, ipynb
-                           num_nodes = c(32L, 32L), # in ipynb and DeSurv
-                           batch_norm = TRUE, # in ipynb
-                           dropout = 0.6, #  0.1 in ipynb and 0.6 in DeepHit paper
-                           cuts = 300, # in DeSurv and DeepHit, 10 and interpolation in ipynb
-                           mod_alpha = 0.2, # in DeSurv, ipynb
-                           early_stopping = TRUE, # in DeepHit and ipynb
-                           #tolerance = 3,
-                           sigma = 0.1, # in DeSurv and ipynb
-                           batch_size = 50, # 50 in Deephit, 256 in ipynb
-                           epochs = 100, # in ipynb
-                           #verbose = TRUE,
-                           learning_rate = 0.001, # 0.001 in Deephit, 0.01 in ipynb
-                           #betas = c(0.9, 0.999), # default adam
-                           frac = 0.2) # validation 
-# Survival object
-surv_deephit <- predict(deephit_model,
-                        newdata = mb_test, type = "surv")
-time_grid <- as.numeric(colnames(surv_deephit))# * t_train_max
-# Interpolate
-surv_deephit_int <- apply(surv_deephit, 1, function(s){
-  approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
-})
-surv_deephit_int <- t(surv_deephit_int)
-rownames(surv_deephit_int) <- rownames(mb_test)
-colnames(surv_deephit_int) <- ts_scaled
-# Calculate expected mortality
-deephit_exp_mort <- rowSums(-log(pmax(surv_deephit_int, 1e-10)))
-
-
-## Gather the survival curves for plotting
-survival_curves <- list(patients_ids = rownames(mb_test),
+  # Survival object
+  surv_deephit <- predict(deephit_model,
+                          newdata = mb_test, type = "surv")
+  time_grid <- as.numeric(colnames(surv_deephit))# * t_train_max
+  # Interpolate
+  surv_deephit_int <- apply(surv_deephit, 1, function(s){
+    approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
+  })
+  surv_deephit_int <- t(surv_deephit_int)
+  rownames(surv_deephit_int) <- rownames(mb_test)
+  colnames(surv_deephit_int) <- ts_scaled
+  # Calculate expected mortality
+  second_smallest_survival_prob = unique(sort(as.vector(surv_deephit_int), partial = 2))[2]/10
+  deephit_exp_mort <- rowSums(-log(pmax(surv_deephit_int, second_smallest_survival_prob)))
+  deephit_exp_mort_arb <- rowSums(-log(pmax(surv_deephit_int, 1e-10)))
+  deephit_exp_mort_cut <- rowSums(-log(pmax(surv_coxtime_int[, 1:121])))
+  
+  # Gather the survival survs too
+  survival_curves[[k]] <- list(patients_ids = rownames(mb_test),
                                test_time = mb_test$time,
                                test_status = mb_test$status,
                                RSF = as.data.frame(surv_rf_int),
@@ -416,133 +448,208 @@ survival_curves <- list(patients_ids = rownames(mb_test),
                                DeepSurv = as.data.frame(surv_deepsurv_int),
                                Coxtime = as.data.frame(surv_coxtime_int),
                                covariates = test_covariates)
+  
+  fold_results <- data.frame(cv_fold = k,
+                             patients_ids = rownames(mb_test), 
+                             test_time = mb_test$time,
+                             test_status = mb_test$status,
+                             ExpMort.RSF = rf_exp_mort,
+                             ExpMort.CoxPH = cox_exp_mort,
+                             ExpMort.DeepHit = deephit_exp_mort,
+                             ExpMort.DeepSurv = deepsurv_exp_mort,
+                             ExpMort.CoxTime = coxtime_exp_mort,
+                             # ExpMort.RSF_arb = rf_exp_mort_arb,
+                             # ExpMort.CoxPH_arb = cox_exp_mort_arb,
+                             # ExpMort.DeepHit_arb = deephit_exp_mort_arb,
+                             # ExpMort.DeepSurv_arb = deepsurv_exp_mort_arb,
+                             # ExpMort.CoxTime_arb = coxtime_exp_mort_arb,
+                             # ExpMort120.RSF = rf_exp_mort_cut,
+                             # ExpMort120.CoxPH = cox_exp_mort_cut,
+                             # ExpMort120.DeepHit = deephit_exp_mort_cut,
+                             # ExpMort120.DeepSurv = deepsurv_exp_mort_cut,
+                             # ExpMort120.CoxTime = coxtime_exp_mort_cut,
+                             RSF = as.data.frame(surv_rf_int),
+                             CoxPH = as.data.frame(surv_cox_int),
+                             DeepHit = as.data.frame(surv_deephit_int), 
+                             DeepSurv = as.data.frame(surv_deepsurv_int),
+                             CoxTime = as.data.frame(surv_coxtime_int), 
+                             covariates = test_covariates)
+    
 
-# Store the results:
-fold_results <- data.frame(ho_repeat = "DeepSurvSplits",
-                           #cv_fold = k,
-                           patients_ids = rownames(mb_test), 
-                           test_time = mb_test$time,
-                           test_status = mb_test$status,
-                           ExpMort.RSF = rf_exp_mort,
-                           ExpMort.CoxPH = cox_exp_mort,
-                           ExpMort.DeepHit = deephit_exp_mort,
-                           ExpMort.DeepSurv = deepsurv_exp_mort,
-                           ExpMort.CoxTime = coxtime_exp_mort,
-                           RSF = as.data.frame(surv_rf_int),
-                           CoxPH = as.data.frame(surv_cox_int),
-                           DeepHit = as.data.frame(surv_deephit_int), 
-                           DeepSurv = as.data.frame(surv_deepsurv_int),
-                           CoxTime = as.data.frame(surv_coxtime_int), 
-                           covariates = test_covariates)
- 
+  # Append fold results to the list
+ all_predictions[[paste("Fold", k)]] <- fold_results
 
-# Append fold results to the list
-all_predictions[[paste("Split")]] <- fold_results
+}
 
+folds_stacked_predictions <- do.call(rbind, all_predictions)
 
-stacked_predictions <- do.call(rbind, all_predictions)
+#saveRDS(folds_stacked_predictions, "./Results/5FoldStackedPredictions.rds")
+#saveRDS(survival_curves, "./Results/5FoldStackedPredictionsCurves.rds")
+```
+
+```{r Plot expected mortality, fig.height=10, fig.width=8}
+
+folds_long <- folds_stacked_predictions %>%
+  pivot_longer(cols = starts_with("ExpMort"), names_to = "Model", values_to = "ExpectedMortality") %>%
+  mutate(Model = gsub("ExpMort\\.", "", Model)) %>%
+  mutate(
+    facet_group = case_when(
+      grepl("_arb$", Model) ~ "2_arb",
+      grepl("120", Model)   ~ "3_120",
+      TRUE                  ~ "1_named"
+    ),
+    facet_order = paste0(facet_group, "_", Model)
+  )
+folds_long <- folds_long %>%
+  mutate(Model = factor(Model, levels = folds_long %>%
+                          distinct(facet_order, Model) %>%
+                          arrange(facet_order) %>%
+                          pull(Model)))
+# In color
+ggplot(folds_long, aes(x = as.factor(cv_fold), y = ExpectedMortality, fill = as.factor(cv_fold))) +
+  geom_violin(trim = FALSE) +
+  facet_wrap(~ Model, nrow = 3) +
+  labs(
+    title = "",
+    x = "Cross-validation Fold",
+    y = "Expected Mortality"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_brewer(palette = "Pastel1")
+# In black
+ggplot(folds_long, aes(x = as.factor(cv_fold), y = ExpectedMortality, fill = as.factor(cv_fold))) +
+   geom_violin(trim = FALSE, fill = "grey60", color = "black") +
+  facet_wrap(~ Model, nrow = 3) +
+  labs(
+    title = "",
+    x = "Cross-validation Fold",
+    y = "Expected Mortality"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none") 
 
 ```
 
-### Censoring probabilities
+### Censoring probabilities and IPCW
 
 To facilitate the interpretation of the differences across C-index estimates,
 we calculate the censoring probabilities for the training and test sets.
 
-```{r censoring probablities}
-for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
-    ### plot also the censoring probs and the ipcw:
-  test <- folds_stacked_predictions[folds_stacked_predictions$cv_fold == fold_n, ] 
-  
-  tmp <- test
+```{r IPCW per fold, fig.height=10, fig.width=8}
+# Number of folds
+folds <- unique(folds_stacked_predictions$cv_fold)
+n_folds <- length(folds)
 
-  tmp$censor.status <- ifelse(tmp$test_time %in% c(1, 2), 1, 0)
-  
-  tmp <- tmp[order(tmp$test_time),]
-  
-  weight.i <- pec::ipcw(formula=Surv(test_time,censor.status)~1,
-                   data=tmp,
-                   method="marginal",
-                   times=unique(tmp$test_time),
-                   subjectTimes=tmp$test_time, 
-                   what = "IPCW.subjectTimes")$IPCW.subjectTimes
-  weight.j <- pec::ipcw(formula=Surv(test_time,censor.status)~1,
-                   data=tmp,
-                   method="marginal",
-                   times=unique(tmp$test_time),
-                   subjectTimes=tmp$test_time,
-                   subjectTimesLag=0,
-                   what="IPCW.times")$IPCW.times
-  
-   time_points_test <- unique(tmp$test_time)
-  
-  
-   fit_test <- prodlim(Hist(test_time, test_status) ~ 1, data = tmp, reverse = TRUE)
+par(mfrow = c(3, 2), mar = c(4, 4, 3, 1))  # adjust margins
 
-  # plot(time_points, weight.j,
-  #      type = "l",
-  #      col = "black",
-  #      lwd = 2,
-  #      xlab = "Time",
-  #      ylab = expression(G[2](t) == (1 / w[t])^2),
-  #      main = expression("Variation of " ~ G[2](t) ~ "over time"))
+# Loop through folds
+for (fold_n in folds) {
+  cat("Processing Fold:", fold_n, "\n")
+
+  # Test set
+  test <- folds_stacked_predictions[folds_stacked_predictions$cv_fold == fold_n, ]
+  test$censor.status <- ifelse(test$test_status == 0, 1, 0)  # 1 = censored
+  test <- test[order(test$test_time), ]
+
+  weight.j.test <- pec::ipcw(
+    formula = Surv(test_time, censor.status) ~ 1,
+    data = test,
+    method = "marginal",
+    times = unique(test$test_time),
+    subjectTimes = test$test_time,
+    subjectTimesLag = 0,
+    what = "IPCW.times"
+  )$IPCW.times
+
+  IPCWtest <- 1 / weight.j.test^2
+  time_points_test <- unique(test$test_time)
+
+  fit_test <- prodlim(Hist(test_time, test_status) ~ 1, data = test, reverse = TRUE)
+
+  # Train set
+  train <- folds_stacked_predictions[folds_stacked_predictions$cv_fold != fold_n, ]
+  train$censor.status <- ifelse(train$test_status == 0, 1, 0)
+  train <- train[order(train$test_time), ]
+
+  weight.j.train <- pec::ipcw(
+    formula = Surv(test_time, censor.status) ~ 1,
+    data = train,
+    method = "marginal",
+    times = unique(train$test_time),
+    subjectTimes = train$test_time,
+    subjectTimesLag = 0,
+    what = "IPCW.times"
+  )$IPCW.times
+
+  IPCWtrain <- 1 / weight.j.train^2
+  time_points_train <- unique(train$test_time)
+
+  fit_train <- prodlim(Hist(test_time, test_status) ~ 1, data = train, reverse = TRUE)
+
+  # Plot both IPCW curves in black
+  # plot(time_points_test, IPCWtest,
+  #      type = "l", col = "black", lwd = 2, lty = 2,
+  #      xlab = "Time (months)", ylab = "1 / G²(t)",
+  #      main = paste0("IPCW - Fold ", fold_n))
+  # lines(time_points_train, IPCWtrain, col = "black", lwd = 2)
   # 
-  # Compute G2
-  IPCWtest <- 1 / weight.j^2
+  # legend("topleft", legend = c("Test", "Train"),
+  #        col = c("black", "black"),
+  #        lty = c(2, 1), lwd = 1, bty = "n")
   
-  tmp <- folds_stacked_predictions[folds_stacked_predictions$cv_fold != fold_n, ] 
-  
-  fit_train <- prodlim(Hist(test_time, test_status) ~ 1, data = tmp, reverse = TRUE)
-
-  tmp$censor.status <- ifelse(tmp$test_time %in% c(1, 2), 1, 0)
-  
-  tmp <- tmp[order(tmp$test_time),]
-  
-  weight.i <- pec::ipcw(formula=Surv(test_time,censor.status)~1,
-                   data=tmp,
-                   method="marginal",
-                   times=unique(tmp$test_time),
-                   subjectTimes=tmp$test_time, 
-                   what = "IPCW.subjectTimes")$IPCW.subjectTimes
-  weight.j <- pec::ipcw(formula=Surv(test_time,censor.status)~1,
-                   data=tmp,
-                   method="marginal",
-                   times=unique(tmp$test_time),
-                   subjectTimes=tmp$test_time,
-                   subjectTimesLag=0,
-                   what="IPCW.times")$IPCW.times
-  
-  IPCWtrain <- 1 / weight.j^2
-  
-  
-  time_points <- unique(tmp$test_time)
-  
-  # Plot G2 vs time
+  # Plot both IPCW in color
   plot(time_points_test, IPCWtest,
-       type = "l",
-       col = "black",
-       lwd = 2,
-       xlab = paste0("Fold ", fold_n))
-  lines(time_points, IPCWtrain ,col="blue")
+       type = "l", col = "darkorange", lty = c(1, 10), lwd = 2,
+       xlab = "Time (months)", ylab = "1 / G²(t)",
+       main = paste0("IPCW - Fold ", fold_n))
+  lines(time_points_train, IPCWtrain, col = "steelblue", lwd = 2)
 
-  plot(fit_test,
-       xlab = "Time (months)",
-       ylab = "Censoring probability",
-       confint = TRUE,
-       legend = FALSE,
-       col = "steelblue",
-       lwd = 2,
-       ylim = c(0, 1), 
-       main = paste0("Fold ", fold_n))
+  legend("topleft", legend = c("Test", "Train"),
+         col = c("darkorange", "steelblue"),
+         lty = c(1, 1), lwd = 2, bty = "n")
   
-  plot(fit_train,
-       add = TRUE,
-       confint = TRUE,
-       legend = FALSE,
-       col = "darkorange",
-       lwd = 2)
 }
 
+```
+
+```{r censoring-probabilities}
+
+plot_censoring_with_risk_table <- function(fold_n, data) {
+
+  test <- data[data$cv_fold == fold_n, ]
+  train <- data[data$cv_fold != fold_n, ]
+  
+  fit_test <- prodlim(Hist(test_time, test_status) ~ 1, data = test, reverse = TRUE)
+  fit_train <- prodlim(Hist(test_time, test_status) ~ 1, data = train, reverse = TRUE)
+  
+  max_time <- min(max(test$test_time), max(train$test_time))
+  time_points <- pretty(c(0, max_time), n = 10)
+  time_points <- time_points[time_points <= max_time]
+  
+  test_risk <- summary(fit_test, times = time_points)$n.risk
+  train_risk <- summary(fit_train, times = time_points)$n.risk
+  risk_table <- data.frame(Time = time_points, Train = train_risk, Test = test_risk)
+  
+  plot_grob <-
+    plot(fit_train, confint = TRUE, col = "black", lwd = 2,
+         xlab = "Time (months)", ylab = "Censoring probability",
+         legend = FALSE, ylim = c(0, 1),
+         main = paste0("Fold ", fold_n))
+    plot(fit_test, add = TRUE, confint = TRUE,
+         col = "black", lwd = 2, lty = 2, legend = FALSE)
+    legend("topleft", legend = c("Train", "Test"),
+           col = c("black", "black"), lty = c(1, 2), lwd = 2, bty = "n")
+  print(plot_grob)
+
+}
+
+# Example usage
+plot_censoring_with_risk_table(fold_n = 1, data = folds_stacked_predictions)
+plot_censoring_with_risk_table(fold_n = 2, data = folds_stacked_predictions)
+plot_censoring_with_risk_table(fold_n = 3, data = folds_stacked_predictions)
+plot_censoring_with_risk_table(fold_n = 4, data = folds_stacked_predictions)
+plot_censoring_with_risk_table(fold_n = 5, data = folds_stacked_predictions)
 ```
 
 
@@ -550,13 +657,21 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
 
 Here, we plot the predicted survival curves
 
-```{r survival curves}
-plot_survival_curves(survival_curves[[1]]$DeepHit, title = "DeepHit Survival Curves")
-plot_survival_curves(survival_curves[[1]]$DeepSurv, title = "DeepSurv Survival Curves")
-plot_survival_curves(survival_curves[[1]]$CoxPH, title = "Cox PH Survival Curves")
-plot_survival_curves(survival_curves[[1]]$Coxtime, title = "Cox Time Survival Curves")
-plot_survival_curves(survival_curves[[1]]$RSF, title = "RSF Survival Curves")
+```{r survival curves, fig.height=11, fig.width=10}
+library(patchwork)
+
+survival_curves <- readRDS("./Results/5FoldStackedPredictionsCurves.rds")
+p1 <- plot_survival_curves(survival_curves[[1]]$DeepHit, title = "DeepHit", seed=123)
+p2 <- plot_survival_curves(survival_curves[[1]]$DeepSurv, title = "DeepSurv", seed=123)
+p3 <- plot_survival_curves(survival_curves[[1]]$CoxPH, title = "CoxPH", seed=123)
+p4 <- plot_survival_curves(survival_curves[[1]]$Coxtime, title = "CoxTime", seed=123)
+p5 <- plot_survival_curves(survival_curves[[1]]$RSF, title = "RSF", seed=123)
+
+(p1 | p2) / (p3 | p4) / (p5 | patchwork::plot_spacer())
+
+
 ```
+
 
 ### Comparison of C-index estimates. 
 
@@ -567,13 +682,13 @@ as the test set) were generated and the same C-index implementations were
 applied for each bootstrap sample. Results are summarised using ... 
 
 
-```{r}
+```{r  Maximum times}
 for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   
   stacked_predictions <- folds_stacked_predictions[folds_stacked_predictions$cv_fold == fold_n, ]
   max_uncensored_time = max(stacked_predictions$test_time[stacked_predictions$test_status == 1])
 
-  cat("Maximum time in fold ", fold_n, " is ", max(stacked_predictions$test_time) ," and maximum uncensored time is ",max_uncensored_time, "\n")
+  cat("Test set maximum time in fold ", fold_n, " is ", max(stacked_predictions$test_time) ," and maximum uncensored time is ",max_uncensored_time, "\n")
 }
 ```
 The max of uncensored time would vary per fold, to ensure that we do not set tau  
@@ -769,8 +884,9 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
 ```
 
 
+```{r Plots, fig.width=13, fig.height=20}
 
-```{r Plots, fig.width=13, fig.height=6}
+plot_list <- list()
 # Extract the plots
 for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   
@@ -818,14 +934,15 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   separator_positions <- seq(1.5, n_metrics - 0.5, by = 1)
   
   ### Version with color
-   g <- ggplot(df_plot, aes(x = Metric, y = cindex, color = Model)) +
+  p <- ggplot(df_plot, aes(x = Metric, y = cindex, color = Model)) +
     geom_pointrange(aes(ymin = lower, ymax = upper),
                     position = position_dodge(width = 0.4), size = 0.5) +
-     facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
-     geom_vline(xintercept = separator_positions, 
+    facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
+    ylim(0.5, 0.75) +
+    geom_vline(xintercept = separator_positions, 
                 linetype = "dashed", color = "grey70") +
      #geom_hline(linetype = "dashed", yintercept = 0.5) +
-    #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
     labs(title = paste0("Fold ", fold_n),
          y = "C-index", x = NULL) +
     theme_minimal(base_size = 14) +
@@ -834,107 +951,98 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
     panel.grid.major.x = element_blank(),
     panel.grid.minor.x = element_blank())
   
-   print(g)
-   
+  plot_list[[paste0("fold_", fold_n)]] <- p
+  
   ### Version for paper
-  p <- ggplot(df_plot, aes(x = Metric, y = cindex)) +
-    geom_pointrange(aes(ymin = lower, ymax = upper, shape=Model),
-                    position = position_dodge(width = 0.6), size = 0.5, color = "black") +
-     facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
-     scale_shape_manual(values = c("RSF" = 15, "DeepHit" = 23, 
-                                   "CoxPH" = 19, "DeepSurv" = 22, "CoxTime" = 24)) +
-     geom_vline(xintercept = separator_positions, 
-                linetype = "dashed", color = "grey70") +
-     #geom_hline(linetype = "dashed", yintercept = 0.5) +
-     #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
-     labs(title = paste0("Fold ", fold_n),
-         y = "C-index", x = NULL) +
-     theme_minimal(base_size = 14) +
-     theme(axis.text.x = element_text(angle = 45, hjust = 1),
-          legend.position = "bottom",
-    panel.grid.major.x = element_blank(),
-    panel.grid.minor.x = element_blank())
+  # p <- ggplot(df_plot, aes(x = Metric, y = cindex)) +
+  #   geom_pointrange(aes(ymin = lower, ymax = upper, shape=Model),
+  #                   position = position_dodge(width = 0.6), size = 0.5, color = "black") +
+  #   facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
+  #   scale_shape_manual(values = c("RSF" = 15, "DeepHit" = 23,
+  #                                  "CoxPH" = 19, "DeepSurv" = 22, "CoxTime" = 24)) +
+  #   geom_vline(xintercept = separator_positions,
+  #               linetype = "dashed", color = "grey70") +
+  #   ylim(0.5, 0.75) +
+  #   #geom_hline(linetype = "dashed", yintercept = 0.5) +
+  #   geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
+  #   labs(title = paste0("Fold ", fold_n),
+  #        y = "C-index", x = NULL) +
+  #   theme_minimal(base_size = 14) +
+  #   theme(axis.text.x = element_text(angle = 45, hjust = 1),
+  #         legend.position = "bottom",
+  #   panel.grid.major.x = element_blank(),
+  #   panel.grid.minor.x = element_blank())
+  # 
+  # plot_list[[paste0("fold_", fold_n)]] <- p
   
-  print(p)
-  
-  ### Plot ipcw:
-  ## Test
-  tmp <- folds_stacked_predictions[folds_stacked_predictions$cv_fold == fold_n, ] 
-  # revert the status, so now censor is 1 
-  tmp$censor.status <- ifelse(tmp$test_time %in% c(1, 2), 1, 0)
-  # Order
-  tmp <- tmp[order(tmp$test_time),]
-  # Calculate weight by time points
-  weight.j <- pec::ipcw(formula=Surv(test_time,censor.status)~1,
-                   data=tmp,
-                   method="marginal",
-                   times=unique(tmp$test_time),
-                   subjectTimes=tmp$test_time,
-                   subjectTimesLag=0,
-                   what="IPCW.times")$IPCW.times
-  # Calcualte the inverse of weights: IPCW
-  IPCWtest <- 1 / weight.j^2
-  # Extract time points
-  time_points_test <- unique(tmp$test_time)
-  # Censoring probability
-  fit_test <- prodlim(Hist(test_time, test_status) ~ 1, data = tmp, reverse = TRUE)
-  
-  # Repeat with train
-  tmp <- folds_stacked_predictions[folds_stacked_predictions$cv_fold != fold_n, ] 
-  # revert the status, so now censor is 1 
-  tmp$censor.status <- ifelse(tmp$test_time %in% c(1, 2), 1, 0)
-  # Order
-  tmp <- tmp[order(tmp$test_time),]
-  # Calculate weight by time points
-  weight.j <- pec::ipcw(formula=Surv(test_time,censor.status)~1,
-                   data=tmp,
-                   method="marginal",
-                   times=unique(tmp$test_time),
-                   subjectTimes=tmp$test_time,
-                   subjectTimesLag=0,
-                   what="IPCW.times")$IPCW.times
-  # Calcualte the inverse of weights: IPCW
-  IPCWtrain <- 1 / weight.j^2
-  # Extract time points
-  time_points <- unique(tmp$test_time)
-  # Censoring probability
-  fit_train <- prodlim(Hist(test_time, test_status) ~ 1, data = tmp, reverse = TRUE)
-  
-  # Plot IPCW vs time
-  plot(time_points_test, IPCWtest,
-       type = "l",
-       col = "steelblue",
-       lwd = 2,
-       xlab = "Time (months)", 
-       ylab = "IPCW")
-  lines(time_points, IPCWtrain ,col="darkorange")
-  legend("topright",                         
-       legend = c("Test IPCW", "Train IPCW"), 
-       col = c("steelblue", "darkorange"),           
-       lty = 1,                            
-       lwd = 2)                            
-  # Plot censoring probability
-  plot(fit_test,
-       xlab = "Time (months)",
-       ylab = "Censoring probability",
-       confint = TRUE,
-       legend = FALSE,
-       col = "steelblue",
-       lwd = 2,
-       ylim = c(0, 1), 
-       main = paste0("Fold ", fold_n))
-  plot(fit_train,
-       add = TRUE,
-       confint = TRUE,
-       legend = FALSE,
-       col = "darkorange",
-       lwd = 2)
-  legend("topleft",                         
-     legend = c("Test IPCW", "Train IPCW"),  
-     col = c("steelblue", "darkorange"),          
-     lty = 1,                            
-     lwd = 2)  
 }
+
+combined_plot <- wrap_plots(plot_list, ncol = 1)
+
+print(combined_plot)
+```
+
+```{r Plot just fold one, fig.width=12, fig.height=10}
+results_expm1 = hold_results[[1]]$results_expm1
+results_expm2 = hold_results[[1]]$results_expm2
+results_expm3 = hold_results[[1]]$results_expm3
+results_surv = hold_results[[1]]$results_surv
+
+results_expm1_point_estim = hold_results[[1]]$results_expm1_point_estim
+results_expm2_point_estim = hold_results[[1]]$results_expm2_point_estim
+results_expm3_point_estim = hold_results[[1]]$results_expm3_point_estim
+results_surv_point_estim = hold_results[[1]]$results_surv_point_estim
+
+expm_df_plot1 <- make_expm_plot_entries(results_expm1, results_expm1_point_estim)
+expm_df_plot2 <- make_expm_plot_entries(results_expm2,  results_expm2_point_estim)
+expm_df_plot3 <- make_expm_plot_entries(results_expm3,  results_expm3_point_estim)
+surv_df_plot  <- make_surv_plot_entries(results_surv,  results_surv_point_estim)
+
+expm_df_plot1$Notation <- "C"
+expm_df_plot2$Notation <- "C_tau"
+expm_df_plot3$Notation <- "C_tau_10"  
+surv_df_plot$Notation  <- "C_td" 
+
+df_plot <- bind_rows(expm_df_plot1, expm_df_plot2, expm_df_plot3, surv_df_plot)
+df_plot$Metric <- sub("::.*", "", df_plot$Metric)
+
+df_plot$Notation <- factor(df_plot$Notation,
+  levels = c("C", "C_tau_10", "C_tau", "C_td"),
+  labels = c(
+    "tilde(C)~(Expected~Mortality)",
+    "tilde(C)[tau]~(Expected~Mortality~tau==10~years)",
+    "tilde(C)[tau]~(Expected~Mortality~tau==max*(T:~Delta==1))",
+    "tilde(C)[td]~(Survival~Distribution)"
+  )
+)
+
+df_plot$Model <- factor(df_plot$Model, levels = c("DeepSurv", "CoxTime", "CoxPH", "RSF", "DeepHit"))
+
+df_plot$Metric <- factor(df_plot$Metric, levels = unique(df_plot$Metric))
+# Get numeric positions of each Metric for vertical lines
+metric_levels <- levels(df_plot$Metric)
+n_metrics <- length(metric_levels)
+
+# Define where to put the vertical lines between metrics
+separator_positions <- seq(1.5, n_metrics - 0.5, by = 1)
+
+ggplot(df_plot, aes(x = Metric, y = cindex, color = Model)) +
+    geom_pointrange(aes(ymin = lower, ymax = upper),
+                    position = position_dodge(width = 0.4), size = 0.5) +
+  facet_wrap(~ Notation, ncol = 2, nrow = 2, labeller = label_parsed, scales = "free_x") +
+  ylim(0.5, 0.75) +
+  geom_vline(xintercept = separator_positions, 
+              linetype = "dashed", color = "grey70") +
+   #geom_hline(linetype = "dashed", yintercept = 0.5) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
+  labs(title ="",
+       y = "C-index", x = NULL) +
+  theme_minimal(base_size = 16) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom",
+  panel.grid.major.x = element_blank(),
+  panel.grid.minor.x = element_blank())
+
 ```
 
 
@@ -1000,7 +1108,7 @@ final_table <- bind_rows(all_folds)
 #### Save table
 
 
-```{r}
+```{r latex table}
 library(kableExtra)
 
 df_combined_bolded <- final_table
@@ -1025,7 +1133,7 @@ latex_code <- kable(df_combined_bolded, format = "latex",
                     booktabs = TRUE, 
                     escape = FALSE)
 
-writeLines(latex_code, "Paper/Tables/results_tableHoldOut.tex")
+#writeLines(latex_code, "Paper/Tables/results_tableHoldOut.tex")
 #writeLines(latex_code, "Results/PaperTables/results_table5fold_Seed123.tex")
 
 ```

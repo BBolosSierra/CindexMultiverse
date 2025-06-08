@@ -1473,26 +1473,28 @@ make_surv_table <- function(results_list, point_estimate) {
   return(df_wide)
 }
 
-plot_survival_curves <- function(surv_matrix, patient_ids = NULL, seed = 42, 
+plot_survival_curves <- function(surv_matrix, patient_ids = NULL, seed = 42, n_patients = 5,
                                  title = "Survival Curves") {
   if (is.null(patient_ids)) {
     set.seed(seed)
-    patient_ids <- sample(1:nrow(surv_matrix), 5)
+    patient_ids <- sample(1:nrow(surv_matrix), n_patients)
   }
   
   subset_curves <- surv_matrix[patient_ids, , drop = FALSE]
   df <- as.data.frame(subset_curves)
-  df$patient_id <- paste0("Patient_", patient_ids)
+  df$patient_id <- rownames(subset_curves)
   df <- df[, c(ncol(df), 1:(ncol(df) - 1))]
   
   df_long <- reshape2::melt(df, id.vars = "patient_id", variable.name = "time", value.name = "surv_prob")
   df_long$time <- as.numeric(as.character(df_long$time))
-  
+ 
   # Plot
   ggplot(df_long, aes(x = time, y = surv_prob, color = patient_id)) +
     geom_line(linewidth = 1) +
-    labs(title = title, x = "Time", y = "Survival Probability") +
-    theme_minimal()
+    labs(title = title, x = "Time", y = "Survival Probability",
+         color = "Patient ID") +
+    theme_minimal(base_size = 14) +
+    theme(plot.title = element_text(hjust = 0.5, size = 14))
   
 }
 
