@@ -1180,7 +1180,7 @@ load_synthetic_datasets <- function(file_path) {
   
 get_model_preds2 <- function(stacked_predictions, 
                              model_names = "all", 
-                             input_type = c("Distribution", "ExpectedMortality", "RiskAtT", "PartialHazAtT"),
+                             input_type = c("Distribution", "ExpectedMortality", "RiskAtT", "RiskScore"),
                              specific_time = NULL, 
                              bootstrap_patient_ids = NULL) {
   
@@ -1201,6 +1201,8 @@ get_model_preds2 <- function(stacked_predictions,
       model_names <- unique(sub("\\..*", "", grep("^[A-Za-z]+\\.\\d+$", all_cols, value = TRUE)))
     } else if (input_type == "ExpectedMortality") {
       model_names <- unique(sub("Exp\\Mort\\.", "", grep("^Exp\\Mort\\.", all_cols, value = TRUE)))
+    } else if (input_type == "RiskScore") {
+      model_names <- unique(sub("Risk\\.", "", grep("^Risk\\.", all_cols, value = TRUE)))
     }
   }
   
@@ -1246,13 +1248,15 @@ get_model_preds2 <- function(stacked_predictions,
         stop("Missing columns: ", paste(missing_cols, collapse = ", "))
       }
       
-      # Transform survival to risk
-      transformed <- lapply(cols, function(col)  - log(df[[col]]))
-      names(transformed) <- cols
-      all_model_cols[[length(all_model_cols) + 1]] <- as.data.frame(transformed)
+    } else if (input_type == "RiskScore") {
+      col_name <- paste0("Risk.", model)
+      if (!col_name %in% names(df)) {
+        stop("Missing column: ", col_name)
+      }
+      all_model_cols[[model]] <- df[, col_name, drop = FALSE]
+      
     }
   }
-  
   # Combine everything to return
   predictions <- do.call(cbind, all_model_cols)
   final_df <- cbind(df[, base_cols, drop = FALSE], predictions)
@@ -1260,7 +1264,7 @@ get_model_preds2 <- function(stacked_predictions,
   return(final_df)
 }
 
-make_risk_plot_entries <- function(results_list) {
+make_risk_plot_entries <- function(results_list, point_estimate) {
   # Extract each result and convert to data.frame rows
   risk_entries <- lapply(names(results_list), function(name) {
     if (name == "batch.metrics") return(NULL)
@@ -1273,7 +1277,7 @@ make_risk_plot_entries <- function(results_list) {
     
     entries <- lapply(seq_along(metrics), function(i) {
       metric_name <- metrics[i]
-      mean_c <- result$mean[i]
+      mean_c <- point_estimate[[name]][[metric_name]]
       ci <- result$confidence.intervals[i, ]
       
       data.frame(
@@ -1336,6 +1340,97 @@ make_risk_table <- function(results_list) {
 }
 
 
+make_expm_plot_entries <- function(results_list, point_estimate) {
+  expm_entries <- lapply(names(results_list), function(name) {
+    if (name == "batch.metrics") return(NULL)
+    
+    result <- results_list[[name]]
+    model <- sub("ExpMort\\.", "", name)
+    metrics <- names(result$mean)
+    
+    entries <- lapply(seq_along(metrics), function(i) {
+      metric_name <- metrics[i]
+      #mean_c <- result$mean[i] # mean of bootstrap
+      mean_c <- point_estimate[[name]][[metric_name]]
+      ci <- result$confidence.intervals[i, ]
+
+      data.frame(
+        Metric = metric_name,
+        Model = model,
+        cindex = mean_c,
+        lower = ci[1],
+        upper = ci[2],
+        InputType = "Exp.Mort",
+        stringsAsFactors = FALSE
+      )
+    })
+    
+    do.call(rbind, entries)
+  })
+  
+  do.call(rbind, expm_entries)
+}
+
+make_surv_plot_entries <- function(results_list, point_estimate) {
+  surv_entries <- lapply(names(results_list), function(name) {
+    if (name == "batch.metrics") return(NULL)
+    
+    result <- results_list[[name]]
+    metrics <- names(result$mean)
+    
+    entries <- lapply(seq_along(metrics), function(i) {
+      metric_name <- metrics[i]
+      #mean_c <- result$mean[i] # mean of bootstrap
+      mean_c <- point_estimate[[name]][[metric_name]]
+      ci <- result$confidence.intervals[i, ]
+      
+      data.frame(
+        Metric = metric_name,
+        Model = name,
+        cindex = mean_c,
+        lower = ci[1],
+        upper = ci[2],
+        InputType = "Distrib.",
+        stringsAsFactors = FALSE
+      )
+    })
+    
+    do.call(rbind, entries)
+  })
+  
+  do.call(rbind, surv_entries)
+}
+
+make_riskscore_plot_entries <- function(results_list, point_estimate) {
+  expm_entries <- lapply(names(results_list), function(name) {
+    if (name == "batch.metrics") return(NULL)
+    
+    result <- results_list[[name]]
+    model <- sub("Risk\\.", "", name)
+    metrics <- names(result$mean)
+    
+    entries <- lapply(seq_along(metrics), function(i) {
+      metric_name <- metrics[i]
+      #mean_c <- result$mean[i] # mean of bootstrap
+      mean_c <- point_estimate[[name]][[metric_name]]
+      ci <- result$confidence.intervals[i, ]
+      
+      data.frame(
+        Metric = metric_name,
+        Model = model,
+        cindex = mean_c,
+        lower = ci[1],
+        upper = ci[2],
+        InputType = "RiskScore",
+        stringsAsFactors = FALSE
+      )
+    })
+    
+    do.call(rbind, entries)
+  })
+  
+  do.call(rbind, expm_entries)
+}
 make_expm_plot_entries <- function(results_list, point_estimate) {
   expm_entries <- lapply(names(results_list), function(name) {
     if (name == "batch.metrics") return(NULL)

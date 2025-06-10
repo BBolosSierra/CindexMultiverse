@@ -39,6 +39,7 @@ library(pysurvivalR)
 library(survivalmodels)
 library(dplyr)
 library(tidyr)
+library(patchwork)
 ```
 
 
@@ -174,11 +175,6 @@ folds_stacked_predictions <-  readRDS("./Results/5FoldStackedPredictions.rds")
 survival_curves <- readRDS("./Results/5FoldStackedPredictionsCurves.rds")
 ```
 
-[CAV: have you saved `survival_curves` too? The chunk related to model fitting
-should include the code you used to save the `survival_curves` and 
-`folds_stacked_predictions` objects. Then, the `load results` chunk should 
-have all the code needed to run it].
-
 
 Run the following if were to train on a random split. 
 
@@ -291,8 +287,7 @@ for (k in 1:K) {
   # Calculate expected mortality
   second_smallest_survival_prob = unique(sort(as.vector(surv_rf_int), partial = 2))[2]/10
   rf_exp_mort <- rowSums(-log(pmax(surv_rf_int, second_smallest_survival_prob)))
-  rf_exp_mort_arb <- rowSums(-log(pmax(surv_rf_int, 1e-10)))
-  rf_exp_mort_cut <- rowSums(-log(pmax(surv_rf_int[, 1:121])))
+  rf_risk_score <- -rowSums(surv_rf_int)
   
   # 2) Predict risk Cox PH
   # Fit with cox ph 
@@ -316,8 +311,7 @@ for (k in 1:K) {
   # Calculate expected mortality
   second_smallest_survival_prob = unique(sort(as.vector(surv_cox_int), partial = 2))[2]/10
   cox_exp_mort <- rowSums(-log(pmax(surv_cox_int, second_smallest_survival_prob)))
-  cox_exp_mort_arb <- rowSums(-log(pmax(surv_cox_int, 1e-10)))
-  cox_exp_mort_cut <- rowSums(-log(pmax(surv_cox_int[,  1:121])))
+  cox_risk_score <- -rowSums(surv_cox_int)
 
   reset_torch_seed()
   
@@ -353,10 +347,9 @@ for (k in 1:K) {
   colnames(surv_deepsurv_int) <- ts_scaled
   # Calculate expected mortality
   second_smallest_survival_prob = unique(sort(as.vector(surv_deepsurv_int), partial = 2))[2]/10
-  deepsurv_exp_mort <- rowSums(-log(pmax(surv_deepsurv_int,second_smallest_survival_prob)))
-  deepsurv_exp_mort_arb <- rowSums(-log(pmax(surv_deepsurv_int, 1e-10)))
-  deepsurv_exp_mort_cut <- rowSums(-log(pmax(surv_deepsurv_int[, 1:121])))
-  
+  deepsurv_exp_mort <- rowSums(-log(pmax(surv_deepsurv_int, second_smallest_survival_prob)))
+  deepsurv_risk_score <- -rowSums(surv_deepsurv_int)
+
   reset_torch_seed()
   # 4) Coxtime
   # Hyperparameters from:
@@ -392,8 +385,7 @@ for (k in 1:K) {
   # Calculate expected mortality
   second_smallest_survival_prob = unique(sort(as.vector(surv_coxtime_int), partial = 2))[2]/10
   coxtime_exp_mort <- rowSums(-log(pmax(surv_coxtime_int, second_smallest_survival_prob)))
-  coxtime_exp_mort_arb <- rowSums(-log(pmax(surv_coxtime_int, 1e-10)))
-  coxtime_exp_mort_cut <- rowSums(-log(pmax(surv_coxtime_int[, 1:121])))
+  coxtime_risk_score <- -rowSums(surv_coxtime_int)
   
   reset_torch_seed()
   
@@ -409,10 +401,11 @@ for (k in 1:K) {
                              num_nodes = c(32L, 32L), # in ipynb and DeSurv
                              batch_norm = TRUE, # in ipynb
                              dropout = 0.6, #  0.1 in ipynb and 0.6 in DeepHit paper
-                             cuts = 1400, # in DeSurv and DeepHit, 10 and interpolation in ipynb
+                             #cuts = 1400, # in DeSurv and DeepHit, 10 and interpolation in ipynb
                              mod_alpha = 0.2, # in DeSurv, ipynb
                              early_stopping = TRUE, # in DeepHit and ipynb
                              #tolerance = 3,
+                             cuts = 1400,
                              sigma = 0.1, # in DeSurv and ipynb
                              batch_size = 50, # 50 in Deephit, 256 in ipynb
                              epochs = 100, # in ipynb
@@ -435,9 +428,8 @@ for (k in 1:K) {
   # Calculate expected mortality
   second_smallest_survival_prob = unique(sort(as.vector(surv_deephit_int), partial = 2))[2]/10
   deephit_exp_mort <- rowSums(-log(pmax(surv_deephit_int, second_smallest_survival_prob)))
-  deephit_exp_mort_arb <- rowSums(-log(pmax(surv_deephit_int, 1e-10)))
-  deephit_exp_mort_cut <- rowSums(-log(pmax(surv_coxtime_int[, 1:121])))
-  
+  deephit_risk_score <- -rowSums(surv_coxtime_int)
+
   # Gather the survival survs too
   survival_curves[[k]] <- list(patients_ids = rownames(mb_test),
                                test_time = mb_test$time,
@@ -458,16 +450,11 @@ for (k in 1:K) {
                              ExpMort.DeepHit = deephit_exp_mort,
                              ExpMort.DeepSurv = deepsurv_exp_mort,
                              ExpMort.CoxTime = coxtime_exp_mort,
-                             # ExpMort.RSF_arb = rf_exp_mort_arb,
-                             # ExpMort.CoxPH_arb = cox_exp_mort_arb,
-                             # ExpMort.DeepHit_arb = deephit_exp_mort_arb,
-                             # ExpMort.DeepSurv_arb = deepsurv_exp_mort_arb,
-                             # ExpMort.CoxTime_arb = coxtime_exp_mort_arb,
-                             # ExpMort120.RSF = rf_exp_mort_cut,
-                             # ExpMort120.CoxPH = cox_exp_mort_cut,
-                             # ExpMort120.DeepHit = deephit_exp_mort_cut,
-                             # ExpMort120.DeepSurv = deepsurv_exp_mort_cut,
-                             # ExpMort120.CoxTime = coxtime_exp_mort_cut,
+                             Risk.RSF = rf_risk_score,
+                             Risk.CoxPH = cox_risk_score,
+                             Risk.DeepHit = deephit_risk_score,
+                             Risk.DeepSurv = deepsurv_risk_score,
+                             Risk.CoxTime = coxtime_risk_score,
                              RSF = as.data.frame(surv_rf_int),
                              CoxPH = as.data.frame(surv_cox_int),
                              DeepHit = as.data.frame(surv_deephit_int), 
@@ -483,8 +470,8 @@ for (k in 1:K) {
 
 folds_stacked_predictions <- do.call(rbind, all_predictions)
 
-#saveRDS(folds_stacked_predictions, "./Results/5FoldStackedPredictions.rds")
-#saveRDS(survival_curves, "./Results/5FoldStackedPredictionsCurves.rds")
+#saveRDS(folds_stacked_predictions, "./Results/5FoldStackedPredictions2.rds")
+#saveRDS(survival_curves, "./Results/5FoldStackedPredictionsCurves2.rds")
 ```
 
 ```{r Plot expected mortality, fig.height=10, fig.width=8}
@@ -612,66 +599,155 @@ for (fold_n in folds) {
 }
 
 ```
+```{r}
+plot_list <- list()
 
-```{r censoring-probabilities}
+for (i in seq_along(folds)) {
+  fold_n <- folds[i]
+  cat("Processing Fold:", fold_n, "\n")
+  
+  # Test set
+  test <- folds_stacked_predictions[folds_stacked_predictions$cv_fold == fold_n, ]
+  test$censor.status <- ifelse(test$test_status == 0, 1, 0)
+  test <- test[order(test$test_time), ]
+
+  weight.j.test <- pec::ipcw(
+    formula = Surv(test_time, censor.status) ~ 1,
+    data = test,
+    method = "marginal",
+    times = unique(test$test_time),
+    subjectTimes = test$test_time,
+    subjectTimesLag = 0,
+    what = "IPCW.times"
+  )$IPCW.times
+
+  IPCWtest <- 1 / weight.j.test^2
+  time_points_test <- unique(test$test_time)
+
+  # Train set
+  train <- folds_stacked_predictions[folds_stacked_predictions$cv_fold != fold_n, ]
+  train$censor.status <- ifelse(train$test_status == 0, 1, 0)
+  train <- train[order(train$test_time), ]
+
+  weight.j.train <- pec::ipcw(
+    formula = Surv(test_time, censor.status) ~ 1,
+    data = train,
+    method = "marginal",
+    times = unique(train$test_time),
+    subjectTimes = train$test_time,
+    subjectTimesLag = 0,
+    what = "IPCW.times"
+  )$IPCW.times
+
+  IPCWtrain <- 1 / weight.j.train^2
+  time_points_train <- unique(train$test_time)
+
+  df_test <- data.frame(time = time_points_test, IPCW = IPCWtest, group = "Test")
+  df_train <- data.frame(time = time_points_train, IPCW = IPCWtrain, group = "Train")
+  df_all <- rbind(df_test, df_train)
+
+  p <- ggplot(df_all, aes(x = time, y = IPCW, color = group, linetype = group)) +
+    geom_line(size = 1) +
+    scale_color_manual(values = c("Test" = "darkorange", "Train" = "steelblue")) +
+    scale_linetype_manual(values = c("Test" = "solid", "Train" = "solid")) +
+    labs(title = paste0("Fold ", fold_n),
+         x = "Time (months)", y = expression("1 / G(t)^2")) +
+    theme_minimal() +
+    theme(legend.title = element_blank())
+
+  plot_list[[paste0("p", i)]] <- p
+}
+
+# Combine with patchwork
+# Assume 5 folds
+(plot_list$p1 | plot_list$p2) / (plot_list$p3 | plot_list$p4) / (plot_list$p5 | plot_spacer())
+
+
+```
+
+```{r censoring-probabilities, fig.height=10, fig.width=8}
 
 plot_censoring_with_risk_table <- function(fold_n, data) {
-
   test <- data[data$cv_fold == fold_n, ]
   train <- data[data$cv_fold != fold_n, ]
   
   fit_test <- prodlim(Hist(test_time, test_status) ~ 1, data = test, reverse = TRUE)
   fit_train <- prodlim(Hist(test_time, test_status) ~ 1, data = train, reverse = TRUE)
   
-  max_time <- min(max(test$test_time), max(train$test_time))
-  time_points <- pretty(c(0, max_time), n = 10)
-  time_points <- time_points[time_points <= max_time]
+  # Extract survival curves
+  surv_train <- summary(fit_train, times = fit_train$time)
+  surv_test <- summary(fit_test, times = fit_test$time)
   
-  test_risk <- summary(fit_test, times = time_points)$n.risk
-  train_risk <- summary(fit_train, times = time_points)$n.risk
-  risk_table <- data.frame(Time = time_points, Train = train_risk, Test = test_risk)
+  df_train <- data.frame(time = fit_train$time,
+                         surv = 1 - fit_train$surv,
+                         group = "Train")
+  df_test <- data.frame(time = fit_test$time,
+                        surv = 1 - fit_test$surv,
+                        group = "Test")
   
-  plot_grob <-
-    plot(fit_train, confint = TRUE, col = "black", lwd = 2,
-         xlab = "Time (months)", ylab = "Censoring probability",
-         legend = FALSE, ylim = c(0, 1),
-         main = paste0("Fold ", fold_n))
-    plot(fit_test, add = TRUE, confint = TRUE,
-         col = "black", lwd = 2, lty = 2, legend = FALSE)
-    legend("topleft", legend = c("Train", "Test"),
-           col = c("black", "black"), lty = c(1, 2), lwd = 2, bty = "n")
-  print(plot_grob)
-
+  df <- rbind(df_train, df_test)
+  
+  p <- ggplot(df, aes(x = time, y = surv, color = group, linetype = group)) +
+    geom_step(size = 1) +
+    ylim(0, 1) +
+    labs(title = paste0("Fold ", fold_n),
+         x = "Time (months)",
+         y = "Censoring Probability P(C < t)") +
+    scale_color_manual(values = c("Train" = "steelblue", "Test" = "darkorange")) +
+    scale_linetype_manual(values = c("Train" = "solid", "Test" = "solid")) +
+    theme_minimal() +
+    theme(legend.title = element_blank())
+  return(p)
 }
 
 # Example usage
-plot_censoring_with_risk_table(fold_n = 1, data = folds_stacked_predictions)
-plot_censoring_with_risk_table(fold_n = 2, data = folds_stacked_predictions)
-plot_censoring_with_risk_table(fold_n = 3, data = folds_stacked_predictions)
-plot_censoring_with_risk_table(fold_n = 4, data = folds_stacked_predictions)
-plot_censoring_with_risk_table(fold_n = 5, data = folds_stacked_predictions)
+p1 <- plot_censoring_with_risk_table(fold_n = 1, 
+                                     data = folds_stacked_predictions)
+p2 <- plot_censoring_with_risk_table(fold_n = 2, 
+                                     data = folds_stacked_predictions)
+p3 <- plot_censoring_with_risk_table(fold_n = 3,
+                                     data = folds_stacked_predictions)
+p4 <- plot_censoring_with_risk_table(fold_n = 4, 
+                                     data = folds_stacked_predictions)
+p5<- plot_censoring_with_risk_table(fold_n = 5, 
+                                    data = folds_stacked_predictions)
+
+(p1 | p2) / (p3 | p4) / (p5 | patchwork::plot_spacer()) + plot_layout(guides = "collect") & theme(legend.position = "bottom")
 ```
 
+```{r, fig.width=10}
+(p1 | plot_list$p1) + plot_layout(guides = "collect") & theme(legend.position = "bottom",
+        plot.title = element_blank())
+```
 
 ### Predicted survival curves
 
 Here, we plot the predicted survival curves
 
 ```{r survival curves, fig.height=11, fig.width=10}
-library(patchwork)
 
-survival_curves <- readRDS("./Results/5FoldStackedPredictionsCurves.rds")
+#survival_curves <- readRDS("./Results/5FoldStackedPredictionsCurves.rds")
 p1 <- plot_survival_curves(survival_curves[[1]]$DeepHit, title = "DeepHit", seed=123)
 p2 <- plot_survival_curves(survival_curves[[1]]$DeepSurv, title = "DeepSurv", seed=123)
 p3 <- plot_survival_curves(survival_curves[[1]]$CoxPH, title = "CoxPH", seed=123)
 p4 <- plot_survival_curves(survival_curves[[1]]$Coxtime, title = "CoxTime", seed=123)
 p5 <- plot_survival_curves(survival_curves[[1]]$RSF, title = "RSF", seed=123)
 
-(p1 | p2) / (p3 | p4) / (p5 | patchwork::plot_spacer())
-
+(p1 | p2) / (p3 | p4) / (p5 | patchwork::plot_spacer()) + plot_layout(guides = "collect") & theme(legend.position = "bottom")
 
 ```
+```{r}
+ggplot(folds_stacked_predictions, aes(x = Risk.DeepSurv, y = ExpMort.DeepSurv)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Relationship between Risk.DeepSurv and ExpMort.DeepSurv",
+    x = "AUSC (-sum (S(t) * dt))",
+    y = "Expected Mortality (RSF) "
+  ) +
+  theme_minimal()
 
+```
 
 ### Comparison of C-index estimates. 
 
@@ -691,7 +767,8 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   cat("Test set maximum time in fold ", fold_n, " is ", max(stacked_predictions$test_time) ," and maximum uncensored time is ",max_uncensored_time, "\n")
 }
 ```
-The max of uncensored time would vary per fold, to ensure that we do not set tau  
+
+The max of uncensored time would vary per fold, to ensure that we do not set tau 
 
 ```{r load holdout}
 hold_results <- readRDS("./Results/holdout_CindexResults.rds")
@@ -708,7 +785,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   mb_train <- folds_stacked_predictions[folds_stacked_predictions$cv_fold != fold_n, ] 
   # Extract the maximum uncensored time per fold
   max_uncensored_time = max(stacked_predictions$test_time[stacked_predictions$test_status == 1])
-  
+
   # Set the number of boostraps
   n_bootstraps <- 100
   # Length of test
@@ -718,9 +795,12 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
                                 sample(stacked_predictions$patients_ids, 
                                        size = dataset_size, replace = TRUE), 
                                 simplify = FALSE)
+ 
+  #print(head(resample_indices[[1]]))
   # Create empty lists to store results
   subset_expm <- list()
   subset_surv <- list()
+  #subset_risk <- list()
   # Create resample sets
   for (r in seq_along(resample_indices)) {
     subset_expm[[r]] <- get_model_preds2(stacked_predictions = stacked_predictions, 
@@ -731,9 +811,13 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
                   model_names = "all",
                   input_type = "Distribution",
                   bootstrap_patient_ids = resample_indices[[r]])
-    
-    
+    subset_risk[[r]] <- get_model_preds2(stacked_predictions = stacked_predictions,
+                        model_names = "all",
+                        input_type = "RiskScore",
+                        bootstrap_patient_ids = resample_indices[[r]])
+
   }
+
   # Expected mortality and estimating C
   select_exps <- grep("ExpMort\\.",colnames(subset_expm[[1]]), value = TRUE)
   results_expm1 <- list() # boostrap results
@@ -748,27 +832,28 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
                                        time = "test_time"),
                                     implementation = list("Hmisc::rcorr.cens",
                                                           "pysurvival",
-                                                          "SurvMetrics::Cindex", 
-                                                          "lifelines", 
+                                                          "SurvMetrics::Cindex",
+                                                          "lifelines",
                                                           "sksurv.censored"),
                                     eval.times = NULL, #C
                                     sampled_data = subset_expm)
-     # Point estimate 
-     results_expm1_point_estim[[exps]] <- metrics.wrapper(predicted = stacked_predictions[[exps]], 
-                                                          censoring = stacked_predictions$test_status, 
-                                                          time = stacked_predictions$test_time, 
+     # Point estimate
+     results_expm1_point_estim[[exps]] <- metrics.wrapper(predicted = stacked_predictions[[exps]],
+                                                          censoring = stacked_predictions$test_status,
+                                                          time = stacked_predictions$test_time,
                                                           implementation = list("Hmisc::rcorr.cens",
                                                           "pysurvival",
-                                                          "SurvMetrics::Cindex", 
-                                                          "lifelines", 
-                                                          "sksurv.censored"), 
+                                                          "SurvMetrics::Cindex",
+                                                          "lifelines",
+                                                          "sksurv.censored"),
                                                           eval.times = NULL)
-     
+
   }
+
   # Expected mortality and estimating C tau with max uncensored time
   select_exps <- grep("ExpMort\\.",colnames(subset_expm[[1]]), value = TRUE)
   results_expm2 <- list() # boostrap results
-  results_expm2_point_estim <- list() # point estimate 
+  results_expm2_point_estim <- list() # point estimate
   for (exps in select_exps) {
      cat("Calculating bootstrap for ExpMort for Model = ", exps, "\n")
     # Bootstrap
@@ -778,33 +863,176 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
                                        censoring = "test_status",
                                        time = "test_time"),
                                     implementation = list("pec::cindex",
-                                                          "survC1::Est.Cval", 
-                                                          "survival.n", 
+                                                          "survC1::Est.Cval",
+                                                          "survival.n",
                                                           "survival.n/G2",
                                                           "sksurv.ipcw"),
                                     #eval.times = round(max(mb$time[mb$status == 1])),
                                     eval.times = max_uncensored_time,
-                                    sampled_data = subset_expm, 
+                                    sampled_data = subset_expm,
                                     additional=list(
-                                sksurv_train_time = mb_train$test_time, 
-                                sksurv_train_status = mb_train$test_status, 
+                                sksurv_train_time = mb_train$test_time,
+                                sksurv_train_status = mb_train$test_status,
                                 sksurv_tied_tol = 1e-8))
-      # Point estimate 
-     results_expm2_point_estim[[exps]] <- metrics.wrapper(predicted = stacked_predictions[[exps]], 
-                                                      censoring = stacked_predictions$test_status, 
-                                                      time = stacked_predictions$test_time, 
+      # Point estimate
+     results_expm2_point_estim[[exps]] <- metrics.wrapper(predicted = stacked_predictions[[exps]],
+                                                      censoring = stacked_predictions$test_status,
+                                                      time = stacked_predictions$test_time,
                                                       implementation = list("pec::cindex",
-                                                          "survC1::Est.Cval", 
-                                                          "survival.n", 
+                                                          "survC1::Est.Cval",
+                                                          "survival.n",
                                                           "survival.n/G2",
-                                                          "sksurv.ipcw"), 
+                                                          "sksurv.ipcw"),
                                                       #eval.times =  round(max(mb$time[mb$status == 1])),
                                                       eval.times =  max_uncensored_time,
                                                       sksurv_train_time = mb_train$test_time,
                                                       sksurv_train_status = mb_train$test_status,
                                                       sksurv_tied_tol = 1e-8)
   }
-  
+    # Expected mortality and estimating C tau at 10 years
+  select_exps <- grep("ExpMort\\.",colnames(subset_expm[[1]]), value = TRUE)
+  results_expm3 <- list()
+  results_expm3_point_estim <- list()
+  for (exps in select_exps) {
+    cat("Calculating bootstrap for ExpMort for Model = ", exps, "\n")
+    # Bootstrap
+    results_expm3[[exps]] <- bootstrap.metric.parallel(metrics.wrapper,
+                                    dataset=list(
+                                       predicted = exps,
+                                       censoring = "test_status",
+                                       time = "test_time"),
+                                    implementation = list("pec::cindex",
+                                                          "survC1::Est.Cval",
+                                                          "survival.n",
+                                                          "survival.n/G2",
+                                                          "sksurv.ipcw"),
+                                    eval.times = 120, # 10 years
+                                    sampled_data = subset_expm,
+                                  additional=list(
+                                sksurv_train_time = mb_train$test_time,
+                                sksurv_train_status = mb_train$test_status,
+                                sksurv_tied_tol = 1e-8))
+     # Point estimate
+     results_expm3_point_estim[[exps]] <- metrics.wrapper(predicted = stacked_predictions[[exps]],
+                                                censoring = stacked_predictions$test_status,
+                                                time = stacked_predictions$test_time,
+                                                implementation = list("pec::cindex",
+                                                    "survC1::Est.Cval",
+                                                    "survival.n",
+                                                    "survival.n/G2",
+                                                    "sksurv.ipcw"),
+                                                eval.times =  120, # 10 years
+                                                sksurv_train_time = mb_train$test_time,
+                                                sksurv_train_status = mb_train$test_status,
+                                                sksurv_tied_tol = 1e-8)
+  }
+    # Expected mortality and estimating C
+  select_risk <- grep("Risk\\.",colnames(subset_risk[[1]]), value = TRUE)
+  results_risk1 <- list() # boostrap results
+  results_risk1_point_estim <- list() # point estimate results
+  for (risk in select_risk) {
+     cat("Calculating bootstrap for ExpMort for Model = ", risk, "\n")
+     # Bootstrap
+     results_risk1[[risk]] <- bootstrap.metric.parallel(metrics.wrapper,
+                                    dataset=list(
+                                       predicted = risk,
+                                       censoring = "test_status",
+                                       time = "test_time"),
+                                    implementation = list("Hmisc::rcorr.cens",
+                                                          "pysurvival",
+                                                          "SurvMetrics::Cindex",
+                                                          "lifelines",
+                                                          "sksurv.censored"),
+                                    eval.times = NULL, #C
+                                    sampled_data = subset_risk)
+     # Point estimate
+     results_risk1_point_estim[[risk]] <- metrics.wrapper(predicted = stacked_predictions[[risk]],
+                                                          censoring = stacked_predictions$test_status,
+                                                          time = stacked_predictions$test_time,
+                                                          implementation = list("Hmisc::rcorr.cens",
+                                                          "pysurvival",
+                                                          "SurvMetrics::Cindex",
+                                                          "lifelines",
+                                                          "sksurv.censored"),
+                                                          eval.times = NULL)
+
+  }
+
+  select_risk <- grep("Risk\\.",colnames(subset_risk[[1]]), value = TRUE)
+  results_risk2 <- list() # boostrap results
+  results_risk2_point_estim <- list() # point estimate
+  for (risk in select_risk) {
+     cat("Calculating bootstrap for ExpMort for Model = ", risk, "\n")
+    # Bootstrap
+     results_risk2[[risk]] <- bootstrap.metric.parallel(metrics.wrapper,
+                                    dataset=list(
+                                       predicted = risk,
+                                       censoring = "test_status",
+                                       time = "test_time"),
+                                    implementation = list("pec::cindex",
+                                                          "survC1::Est.Cval",
+                                                          "survival.n",
+                                                          "survival.n/G2",
+                                                          "sksurv.ipcw"),
+                                    #eval.times = round(max(mb$time[mb$status == 1])),
+                                    eval.times = max_uncensored_time,
+                                    sampled_data = subset_risk,
+                                    additional=list(
+                                sksurv_train_time = mb_train$test_time,
+                                sksurv_train_status = mb_train$test_status,
+                                sksurv_tied_tol = 1e-8))
+      # Point estimate
+     results_risk2_point_estim[[risk]] <- metrics.wrapper(predicted = stacked_predictions[[risk]],
+                                                      censoring = stacked_predictions$test_status,
+                                                      time = stacked_predictions$test_time,
+                                                      implementation = list("pec::cindex",
+                                                          "survC1::Est.Cval",
+                                                          "survival.n",
+                                                          "survival.n/G2",
+                                                          "sksurv.ipcw"),
+                                                      #eval.times =  round(max(mb$time[mb$status == 1])),
+                                                      eval.times =  max_uncensored_time,
+                                                      sksurv_train_time = mb_train$test_time,
+                                                      sksurv_train_status = mb_train$test_status,
+                                                      sksurv_tied_tol = 1e-8)
+  }
+
+  select_risk <- grep("Risk\\.",colnames(subset_risk[[1]]), value = TRUE)
+  results_risk3 <- list()
+  results_risk3_point_estim <- list()
+  for (risk in select_risk) {
+    cat("Calculating bootstrap for ExpMort for Model = ", risk, "\n")
+    # Bootstrap
+    results_risk3[[risk]] <- bootstrap.metric.parallel(metrics.wrapper,
+                                    dataset=list(
+                                       predicted = risk,
+                                       censoring = "test_status",
+                                       time = "test_time"),
+                                    implementation = list("pec::cindex",
+                                                          "survC1::Est.Cval",
+                                                          "survival.n",
+                                                          "survival.n/G2",
+                                                          "sksurv.ipcw"),
+                                    eval.times = 120, # 10 years
+                                    sampled_data = subset_risk,
+                                  additional=list(
+                                sksurv_train_time = mb_train$test_time,
+                                sksurv_train_status = mb_train$test_status,
+                                sksurv_tied_tol = 1e-8))
+     # Point estimate
+     results_risk3_point_estim[[risk]] <- metrics.wrapper(predicted = stacked_predictions[[risk]],
+                                                censoring = stacked_predictions$test_status,
+                                                time = stacked_predictions$test_time,
+                                                implementation = list("pec::cindex",
+                                                    "survC1::Est.Cval",
+                                                    "survival.n",
+                                                    "survival.n/G2",
+                                                    "sksurv.ipcw"),
+                                                eval.times =  120, # 10 years
+                                                sksurv_train_time = mb_train$test_time,
+                                                sksurv_train_status = mb_train$test_status,
+                                                sksurv_tied_tol = 1e-8)
+  }
   model_names <- unique(sub("\\..*", "", grep("^[A-Za-z]+\\.\\d+$",
                                               colnames(subset_surv[[1]]), value = TRUE)))
   results_surv <- list() # Bootstrap result
@@ -821,70 +1049,41 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
                                     implementation = list("pycox.Ant", "pycox.Adj.Ant"),
                                     sampled_data = subset_surv)
     # Generate matrix
-    surv_mat = stacked_predictions[, grep(paste0("^", model), names(stacked_predictions), 
+    surv_mat = stacked_predictions[, grep(paste0("^", model), names(stacked_predictions),
                                           value = TRUE), drop = FALSE]
     colnames(surv_mat) <- as.numeric(sub(".*\\.", "", colnames(surv_mat)))
     # Point estimate
-    results_surv_point_estim[[model]] <- metrics.wrapper(surv_matrix = surv_mat, 
-                                                      censoring = stacked_predictions$test_status, 
-                                                      time = stacked_predictions$test_time, 
+    results_surv_point_estim[[model]] <- metrics.wrapper(surv_matrix = surv_mat,
+                                                      censoring = stacked_predictions$test_status,
+                                                      time = stacked_predictions$test_time,
                                                       implementation = list("pycox.Ant",
                                                                             "pycox.Adj.Ant"))
   }
-  # Expected mortality and estimating C tau at 10 years
-  select_exps <- grep("ExpMort\\.",colnames(subset_expm[[1]]), value = TRUE)
-  results_expm3 <- list()
-  results_expm3_point_estim <- list()
-  for (exps in select_exps) {
-    cat("Calculating bootstrap for ExpMort for Model = ", exps, "\n")
-    # Bootstrap
-    results_expm3[[exps]] <- bootstrap.metric.parallel(metrics.wrapper,
-                                    dataset=list(
-                                       predicted = exps,
-                                       censoring = "test_status",
-                                       time = "test_time"),
-                                    implementation = list("pec::cindex",
-                                                          "survC1::Est.Cval", 
-                                                          "survival.n", 
-                                                          "survival.n/G2",
-                                                          "sksurv.ipcw"),
-                                    eval.times = 120, # 10 years
-                                    sampled_data = subset_expm, 
-                                  additional=list(
-                                sksurv_train_time = mb_train$test_time, 
-                                sksurv_train_status = mb_train$test_status, 
-                                sksurv_tied_tol = 1e-8))
-     # Point estimate
-     results_expm3_point_estim[[exps]] <- metrics.wrapper(predicted = stacked_predictions[[exps]], 
-                                                censoring = stacked_predictions$test_status, 
-                                                time = stacked_predictions$test_time, 
-                                                implementation = list("pec::cindex",
-                                                    "survC1::Est.Cval", 
-                                                    "survival.n", 
-                                                    "survival.n/G2",
-                                                    "sksurv.ipcw"), 
-                                                eval.times =  120, # 10 years
-                                                sksurv_train_time = mb_train$test_time,
-                                                sksurv_train_status = mb_train$test_status,
-                                                sksurv_tied_tol = 1e-8)
-  }
-  # Store it: 
-  hold_results[[fold_n]] <- list( results_expm1 = results_expm1, #C 
+
+  # Store it:
+  hold_results[[fold_n]] <- list( results_expm1 = results_expm1, #C
                                   results_expm1_point_estim = results_expm1_point_estim,
                                   results_expm2 = results_expm2, #C tau at max uncensored time
                                   results_expm2_point_estim = results_expm2_point_estim,
                                   results_expm3 = results_expm3, #C tau at 10 years
                                   results_expm3_point_estim = results_expm3_point_estim,
-                                  results_surv  = results_surv, 
-                                  results_surv_point_estim = results_surv_point_estim)
+                                  results_surv  = results_surv,
+                                  results_surv_point_estim = results_surv_point_estim,
+                                  results_risk1 = results_risk1,
+                                  results_risk1_point_estim = results_risk1_point_estim,
+                                  results_risk2 = results_risk2,
+                                  results_risk2_point_estim = results_risk2_point_estim,
+                                  results_risk3 = results_risk3,
+                                  results_risk3_point_estim = results_risk3_point_estim
+  )
 
 }
 
-#saveRDS(hold_results, "./Results/holdout_CindexResults.rds")
+#saveRDS(hold_results, "./Results/holdout_CindexResults2.rds")
 ```
 
 
-```{r Plots, fig.width=13, fig.height=20}
+```{r Plot results,  fig.width=13, fig.height=20}
 
 plot_list <- list()
 # Extract the plots
@@ -893,32 +1092,51 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   results_expm1 = hold_results[[fold_n]]$results_expm1
   results_expm2 = hold_results[[fold_n]]$results_expm2
   results_expm3 = hold_results[[fold_n]]$results_expm3
+  results_risk1 = hold_results[[fold_n]]$results_risk1
+  results_risk2 = hold_results[[fold_n]]$results_risk2
+  results_risk3 = hold_results[[fold_n]]$results_risk3
   results_surv = hold_results[[fold_n]]$results_surv
   
   results_expm1_point_estim = hold_results[[fold_n]]$results_expm1_point_estim
   results_expm2_point_estim = hold_results[[fold_n]]$results_expm2_point_estim
   results_expm3_point_estim = hold_results[[fold_n]]$results_expm3_point_estim
+  results_risk1_point_estim = hold_results[[fold_n]]$results_risk1_point_estim
+  results_risk2_point_estim = hold_results[[fold_n]]$results_risk2_point_estim
+  results_risk3_point_estim = hold_results[[fold_n]]$results_risk3_point_estim
   results_surv_point_estim = hold_results[[fold_n]]$results_surv_point_estim
 
   expm_df_plot1 <- make_expm_plot_entries(results_expm1, results_expm1_point_estim)
   expm_df_plot2 <- make_expm_plot_entries(results_expm2,  results_expm2_point_estim)
   expm_df_plot3 <- make_expm_plot_entries(results_expm3,  results_expm3_point_estim)
+  risk_df_plot1 <- make_riskscore_plot_entries(results_risk1,  results_risk1_point_estim)
+  risk_df_plot2 <- make_riskscore_plot_entries(results_risk2,  results_risk2_point_estim)
+  risk_df_plot3 <- make_riskscore_plot_entries(results_risk3,  results_risk3_point_estim)
   surv_df_plot  <- make_surv_plot_entries(results_surv,  results_surv_point_estim)
 
   expm_df_plot1$Notation <- "C"
   expm_df_plot2$Notation <- "C_tau"
   expm_df_plot3$Notation <- "C_tau_10"  
+  risk_df_plot1$Notation <- "C_risk"
+  risk_df_plot2$Notation <- "C_risk_tau"
+  risk_df_plot3$Notation <- "C_risk_tau_10"  
   surv_df_plot$Notation  <- "C_td" 
   
-  df_plot <- bind_rows(expm_df_plot1, expm_df_plot2, expm_df_plot3, surv_df_plot)
+  df_plot <- bind_rows(expm_df_plot1, risk_df_plot1, 
+                       expm_df_plot2, risk_df_plot2, 
+                       expm_df_plot3, risk_df_plot3,
+                       surv_df_plot)
+  
   df_plot$Metric <- sub("::.*", "", df_plot$Metric)
   
   df_plot$Notation <- factor(df_plot$Notation,
-    levels = c("C", "C_tau_10", "C_tau", "C_td"),
+    levels = c("C", "C_risk", "C_tau_10", "C_risk_tau_10", "C_tau", "C_risk_tau", "C_td"),
     labels = c(
       "tilde(C)~(Expected~Mortality)",
+      "tilde(C)~(RiskScore)",
       "tilde(C)[tau]~(Expected~Mortality~tau==10~years)",
+      "tilde(C)[tau]~(RiskScore~tau==10~years)",
       "tilde(C)[tau]~(Expected~Mortality~tau==max*(T:~Delta==1))",
+      "tilde(C)[tau]~(RiskScore~tau==max*(T:~Delta==1))",
       "tilde(C)[td]~(Survival~Distribution)"
     )
   )
@@ -937,13 +1155,13 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   p <- ggplot(df_plot, aes(x = Metric, y = cindex, color = Model)) +
     geom_pointrange(aes(ymin = lower, ymax = upper),
                     position = position_dodge(width = 0.4), size = 0.5) +
-    facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
+    facet_wrap(~ Notation, nrow = 4, ncol=2, scales = "free_x", labeller = label_parsed)+
     ylim(0.5, 0.75) +
     geom_vline(xintercept = separator_positions, 
                 linetype = "dashed", color = "grey70") +
      #geom_hline(linetype = "dashed", yintercept = 0.5) +
     geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
-    labs(title = paste0("Fold ", fold_n),
+    labs(#title = paste0("Fold ", fold_n),
          y = "C-index", x = NULL) +
     theme_minimal(base_size = 14) +
     theme(axis.text.x = element_text(angle = 45, hjust = 1),
@@ -977,73 +1195,14 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   
 }
 
-combined_plot <- wrap_plots(plot_list, ncol = 1)
-
-print(combined_plot)
-```
-
-```{r Plot just fold one, fig.width=12, fig.height=10}
-results_expm1 = hold_results[[1]]$results_expm1
-results_expm2 = hold_results[[1]]$results_expm2
-results_expm3 = hold_results[[1]]$results_expm3
-results_surv = hold_results[[1]]$results_surv
-
-results_expm1_point_estim = hold_results[[1]]$results_expm1_point_estim
-results_expm2_point_estim = hold_results[[1]]$results_expm2_point_estim
-results_expm3_point_estim = hold_results[[1]]$results_expm3_point_estim
-results_surv_point_estim = hold_results[[1]]$results_surv_point_estim
-
-expm_df_plot1 <- make_expm_plot_entries(results_expm1, results_expm1_point_estim)
-expm_df_plot2 <- make_expm_plot_entries(results_expm2,  results_expm2_point_estim)
-expm_df_plot3 <- make_expm_plot_entries(results_expm3,  results_expm3_point_estim)
-surv_df_plot  <- make_surv_plot_entries(results_surv,  results_surv_point_estim)
-
-expm_df_plot1$Notation <- "C"
-expm_df_plot2$Notation <- "C_tau"
-expm_df_plot3$Notation <- "C_tau_10"  
-surv_df_plot$Notation  <- "C_td" 
-
-df_plot <- bind_rows(expm_df_plot1, expm_df_plot2, expm_df_plot3, surv_df_plot)
-df_plot$Metric <- sub("::.*", "", df_plot$Metric)
-
-df_plot$Notation <- factor(df_plot$Notation,
-  levels = c("C", "C_tau_10", "C_tau", "C_td"),
-  labels = c(
-    "tilde(C)~(Expected~Mortality)",
-    "tilde(C)[tau]~(Expected~Mortality~tau==10~years)",
-    "tilde(C)[tau]~(Expected~Mortality~tau==max*(T:~Delta==1))",
-    "tilde(C)[td]~(Survival~Distribution)"
-  )
-)
-
-df_plot$Model <- factor(df_plot$Model, levels = c("DeepSurv", "CoxTime", "CoxPH", "RSF", "DeepHit"))
-
-df_plot$Metric <- factor(df_plot$Metric, levels = unique(df_plot$Metric))
-# Get numeric positions of each Metric for vertical lines
-metric_levels <- levels(df_plot$Metric)
-n_metrics <- length(metric_levels)
-
-# Define where to put the vertical lines between metrics
-separator_positions <- seq(1.5, n_metrics - 0.5, by = 1)
-
-ggplot(df_plot, aes(x = Metric, y = cindex, color = Model)) +
-    geom_pointrange(aes(ymin = lower, ymax = upper),
-                    position = position_dodge(width = 0.4), size = 0.5) +
-  facet_wrap(~ Notation, ncol = 2, nrow = 2, labeller = label_parsed, scales = "free_x") +
-  ylim(0.5, 0.75) +
-  geom_vline(xintercept = separator_positions, 
-              linetype = "dashed", color = "grey70") +
-   #geom_hline(linetype = "dashed", yintercept = 0.5) +
-  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
-  labs(title ="",
-       y = "C-index", x = NULL) +
-  theme_minimal(base_size = 16) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom",
-  panel.grid.major.x = element_blank(),
-  panel.grid.minor.x = element_blank())
+combined_plot <- wrap_plots(plot_list)
+#print(combined_plot)
 
 ```
+```{r plot fold one, fig.width=12, fig.height=15}
+plot_list$fold_1 + theme(plot.title = element_blank())
+```
+
 
 
 ### Table with results
