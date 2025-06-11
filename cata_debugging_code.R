@@ -5,6 +5,99 @@ library(ggplot2)
 library(cowplot)
 library(GGally)
 
+## Debugging 2.0 - comparison between expected mortality and sum(S(t))
+
+folds_stacked_predictions <- 
+  readRDS("./Results/5FoldStackedPredictions2.rds")
+
+# Extract predictions for each method
+predCoxPH <- folds_stacked_predictions %>%
+  dplyr::select(starts_with("CoxPH"))
+predCoxTime <- folds_stacked_predictions %>%
+  dplyr::select(starts_with("CoxTime"))
+predDeepHit <- folds_stacked_predictions %>%
+  dplyr::select(starts_with("DeepHit"))
+predDeepSurv <- folds_stacked_predictions %>%
+  dplyr::select(starts_with("DeepSurv"))
+predRSF <- folds_stacked_predictions %>%
+  dplyr::select(starts_with("RSF"))
+
+# Ensure that the predictions are matrices
+predCoxPH <- as.matrix(predCoxPH)
+predCoxTime <- as.matrix(predCoxTime)
+predDeepHit <- as.matrix(predDeepHit)
+predDeepSurv <- as.matrix(predDeepSurv)
+predRSF <- as.matrix(predRSF)
+
+# Calculate expected mortality for each method
+expectedMort <- function(myPredictions) {
+  -sum(log(as.numeric(myPredictions)))
+}
+
+emCoxPH <- apply(predCoxPH, 1, expectedMort)
+emCoxTime <- apply(predCoxTime, 1, expectedMort)
+emDeepHit <- apply(predDeepHit, 1, expectedMort)
+emDeepSurv <- apply(predDeepSurv, 1, expectedMort)
+emRSF <- apply(predRSF, 1, expectedMort)
+
+em <- data.frame(
+  CoxPH = emCoxPH,
+  CoxTime = emCoxTime,
+  DeepHit = emDeepHit,
+  DeepSurv = emDeepSurv,
+  RSF = emRSF
+)
+
+par(mfrow = c(2,3))
+
+plot(emCoxPH, folds_stacked_predictions$ExpMort.CoxPH)
+abline(a = 0, b = 1, col = "red")
+
+plot(emCoxTime, folds_stacked_predictions$ExpMort.CoxTime)
+abline(a = 0, b = 1, col = "red")
+
+plot(emDeepHit, folds_stacked_predictions$ExpMort.DeepHit)
+abline(a = 0, b = 1, col = "red")
+
+plot(emDeepSurv, folds_stacked_predictions$ExpMort.DeepSurv)
+abline(a = 0, b = 1, col = "red")
+
+plot(emRSF, folds_stacked_predictions$ExpMort.RSF)
+abline(a = 0, b = 1, col = "red")
+
+# Calculate expected mortality for each method
+AUSC <- function(myPredictions) {
+  -sum((as.numeric(myPredictions)))
+}
+
+auscCoxPH <- apply(predCoxPH, 1, AUSC)
+auscCoxTime <- apply(predCoxTime, 1, AUSC)
+auscDeepHit <- apply(predDeepHit, 1, AUSC)
+auscDeepSurv <- apply(predDeepSurv, 1, AUSC)
+auscRSF <- apply(predRSF, 1, AUSC)
+
+par(mfrow = c(2,3))
+plot(auscCoxPH, folds_stacked_predictions$Risk.CoxPH)
+abline(a = 0, b = 1, col = "red")
+
+plot(auscCoxTime, folds_stacked_predictions$Risk.CoxTime)
+abline(a = 0, b = 1, col = "red")
+
+plot(auscDeepHit, folds_stacked_predictions$Risk.DeepHit)
+abline(a = 0, b = 1, col = "red")
+
+plot(auscDeepSurv, folds_stacked_predictions$Risk.DeepSurv)
+abline(a = 0, b = 1, col = "red")
+
+plot(auscRSF, folds_stacked_predictions$Risk.RSF)
+abline(a = 0, b = 1, col = "red")
+
+folds_stacked_predictions %>%
+  ggplot(aes(ExpMort.RSF, Risk.RSF)) +
+  geom_point()
+
+## Debugging 1.0 - early debugging of the expected mortality calculation
+
 # Load predictions across all folds
 folds_stacked_predictions <- 
   readRDS("./Results/5foldCV_MetabricStackedPredictions.rds")
