@@ -65,6 +65,10 @@ abline(a = 0, b = 1, col = "red")
 plot(emRSF, folds_stacked_predictions$ExpMort.RSF)
 abline(a = 0, b = 1, col = "red")
 
+aux <- which(emDeepSurv - folds_stacked_predictions$ExpMort.DeepSurv != 0)
+aux2 <- folds_stacked_predictions[aux,] %>%
+  dplyr::select(starts_with("DeepSurv"))
+
 # Calculate expected mortality for each method
 AUSC <- function(myPredictions) {
   -sum((as.numeric(myPredictions)))
@@ -88,6 +92,8 @@ abline(a = 0, b = 1, col = "red")
 
 plot(auscDeepSurv, folds_stacked_predictions$Risk.DeepSurv)
 abline(a = 0, b = 1, col = "red")
+
+
 
 plot(auscRSF, folds_stacked_predictions$Risk.RSF)
 abline(a = 0, b = 1, col = "red")
