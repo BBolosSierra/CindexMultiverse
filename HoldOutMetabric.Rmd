@@ -170,9 +170,9 @@ Rds file which we load here. We can use the results from 5-fold cross-validation
 
 
 ```{r load results}
-folds_stacked_predictions <-  readRDS("./Results/5FoldStackedPredictions.rds")
+folds_stacked_predictions <-  readRDS("./Results/5FoldStackedPredictions2.rds")
 
-survival_curves <- readRDS("./Results/5FoldStackedPredictionsCurves.rds")
+survival_curves <- readRDS("./Results/5FoldStackedPredictionsCurves2.rds")
 ```
 
 
@@ -285,9 +285,14 @@ for (k in 1:K) {
   rownames(surv_rf_int) <- rownames(mb_test)
   colnames(surv_rf_int) <- ts_scaled
   # Calculate expected mortality
-  second_smallest_survival_prob = unique(sort(as.vector(surv_rf_int), partial = 2))[2]/10
-  rf_exp_mort <- rowSums(-log(pmax(surv_rf_int, second_smallest_survival_prob)))
-  rf_risk_score <- -rowSums(surv_rf_int)
+
+  if (any(as.vector(surv_rf_int) == 0)) {
+    cat("There is a 0 in RSF survival preds \n")
+    second_smallest_survival_prob = unique(sort(as.vector(surv_rf_int), partial = 2))[2]/10
+    surv_rf_int <- surv_rf_int + second_smallest_survival_prob
+  } 
+  rf_exp_mort <- rowSums(-log(surv_rf_int))
+  rf_rmst <- (-rowSums(surv_rf_int))
   
   # 2) Predict risk Cox PH
   # Fit with cox ph 
@@ -309,9 +314,13 @@ for (k in 1:K) {
   rownames(surv_cox_int) <- rownames(mb_test)
   colnames(surv_cox_int)  <- ts_scaled
   # Calculate expected mortality
-  second_smallest_survival_prob = unique(sort(as.vector(surv_cox_int), partial = 2))[2]/10
-  cox_exp_mort <- rowSums(-log(pmax(surv_cox_int, second_smallest_survival_prob)))
-  cox_risk_score <- -rowSums(surv_cox_int)
+  if (any(as.vector(surv_cox_int) == 0))  {
+    cat("There is a 0 in cph survival preds \n")
+    second_smallest_survival_prob = unique(sort(as.vector(surv_cox_int), partial = 2))[2]/10
+    surv_cox_int <- surv_cox_int + second_smallest_survival_prob
+  } 
+  cox_exp_mort <- rowSums(-log(surv_cox_int))
+  cox_rmst <- (-rowSums(surv_cox_int))
 
   reset_torch_seed()
   
@@ -346,10 +355,14 @@ for (k in 1:K) {
   rownames(surv_deepsurv_int) <- rownames(mb_test)
   colnames(surv_deepsurv_int) <- ts_scaled
   # Calculate expected mortality
-  second_smallest_survival_prob = unique(sort(as.vector(surv_deepsurv_int), partial = 2))[2]/10
-  deepsurv_exp_mort <- rowSums(-log(pmax(surv_deepsurv_int, second_smallest_survival_prob)))
-  deepsurv_risk_score <- -rowSums(surv_deepsurv_int)
-
+  if (any(as.vector(surv_deepsurv_int) == 0)) {
+    cat("There is a 0 in DeepSurv survival preds \n")
+    second_smallest_survival_prob = unique(sort(as.vector(surv_deepsurv_int), partial = 2))[2]/10
+    surv_deepsurv_int<- surv_deepsurv_int + second_smallest_survival_prob
+  } 
+  deepsurv_exp_mort <- rowSums(-log(surv_deepsurv_int))
+  deepsurv_rmst <- (-rowSums(surv_deepsurv_int))
+  
   reset_torch_seed()
   # 4) Coxtime
   # Hyperparameters from:
@@ -383,9 +396,13 @@ for (k in 1:K) {
   rownames(surv_coxtime_int) <- rownames(mb_test)
   colnames(surv_coxtime_int) <- ts_scaled
   # Calculate expected mortality
-  second_smallest_survival_prob = unique(sort(as.vector(surv_coxtime_int), partial = 2))[2]/10
-  coxtime_exp_mort <- rowSums(-log(pmax(surv_coxtime_int, second_smallest_survival_prob)))
-  coxtime_risk_score <- -rowSums(surv_coxtime_int)
+  if (any(as.vector(surv_coxtime_int) == 0)) {
+    cat("There is a 0 in Coxtime survival preds \n")
+    second_smallest_survival_prob = unique(sort(as.vector(surv_coxtime_int), partial = 2))[2]/10
+    surv_coxtime_int <- surv_coxtime_int + second_smallest_survival_prob
+  } 
+  coxtime_exp_mort <- rowSums(-log(surv_coxtime_int))
+  coxtime_rmst <- (-rowSums(surv_coxtime_int))
   
   reset_torch_seed()
   
@@ -426,9 +443,13 @@ for (k in 1:K) {
   rownames(surv_deephit_int) <- rownames(mb_test)
   colnames(surv_deephit_int) <- ts_scaled
   # Calculate expected mortality
-  second_smallest_survival_prob = unique(sort(as.vector(surv_deephit_int), partial = 2))[2]/10
-  deephit_exp_mort <- rowSums(-log(pmax(surv_deephit_int, second_smallest_survival_prob)))
-  deephit_risk_score <- -rowSums(surv_coxtime_int)
+  if (any(as.vector(surv_deephit_int) == 0))  {
+    cat("There is a 0 in Deephit survival preds \n")
+    second_smallest_survival_prob = unique(sort(as.vector(surv_deephit_int), partial = 2))[2]/10
+    surv_deephit_int <- surv_deephit_int + second_smallest_survival_prob
+  } 
+  deephit_exp_mort <- rowSums(-log(surv_deephit_int))
+  deephit_rmst <- (-rowSums(surv_deephit_int))
 
   # Gather the survival survs too
   survival_curves[[k]] <- list(patients_ids = rownames(mb_test),
@@ -450,11 +471,11 @@ for (k in 1:K) {
                              ExpMort.DeepHit = deephit_exp_mort,
                              ExpMort.DeepSurv = deepsurv_exp_mort,
                              ExpMort.CoxTime = coxtime_exp_mort,
-                             Risk.RSF = rf_risk_score,
-                             Risk.CoxPH = cox_risk_score,
-                             Risk.DeepHit = deephit_risk_score,
-                             Risk.DeepSurv = deepsurv_risk_score,
-                             Risk.CoxTime = coxtime_risk_score,
+                             RMST.RSF = rf_rmst,
+                             RMST.CoxPH = cox_rmst,
+                             RMST.DeepHit = deephit_rmst,
+                             RMST.DeepSurv = deepsurv_rmst,
+                             RMST.CoxTime = coxtime_rmst,
                              RSF = as.data.frame(surv_rf_int),
                              CoxPH = as.data.frame(surv_cox_int),
                              DeepHit = as.data.frame(surv_deephit_int), 
@@ -599,7 +620,7 @@ for (fold_n in folds) {
 }
 
 ```
-```{r}
+```{r IPCW per fold ggplots}
 plot_list <- list()
 
 for (i in seq_along(folds)) {
@@ -715,7 +736,7 @@ p5<- plot_censoring_with_risk_table(fold_n = 5,
 (p1 | p2) / (p3 | p4) / (p5 | patchwork::plot_spacer()) + plot_layout(guides = "collect") & theme(legend.position = "bottom")
 ```
 
-```{r, fig.width=10}
+```{r Fold 1 Censoring and IPCW, fig.width=10}
 (p1 | plot_list$p1) + plot_layout(guides = "collect") & theme(legend.position = "bottom",
         plot.title = element_blank())
 ```
@@ -729,21 +750,66 @@ Here, we plot the predicted survival curves
 #survival_curves <- readRDS("./Results/5FoldStackedPredictionsCurves.rds")
 p1 <- plot_survival_curves(survival_curves[[1]]$DeepHit, title = "DeepHit", seed=123)
 p2 <- plot_survival_curves(survival_curves[[1]]$DeepSurv, title = "DeepSurv", seed=123)
-p3 <- plot_survival_curves(survival_curves[[1]]$CoxPH, title = "CoxPH", seed=123)
+p3 <- plot_survival_curves(survival_curves[[1]]$CoxPH, title = "CPH", seed=123)
 p4 <- plot_survival_curves(survival_curves[[1]]$Coxtime, title = "CoxTime", seed=123)
 p5 <- plot_survival_curves(survival_curves[[1]]$RSF, title = "RSF", seed=123)
 
 (p1 | p2) / (p3 | p4) / (p5 | patchwork::plot_spacer()) + plot_layout(guides = "collect") & theme(legend.position = "bottom")
 
 ```
-```{r}
-ggplot(folds_stacked_predictions, aes(x = Risk.DeepSurv, y = ExpMort.DeepSurv)) +
+```{r Expected mortality vs RiskScore}
+ggplot(folds_stacked_predictions, aes(x= RMST.CoxTime, y = ExpMort.CoxTime)) +
   geom_point(alpha = 0.6) +
+  facet_wrap(~ cv_fold) +
   geom_smooth(method = "lm", se = FALSE, color = "blue") +
   labs(
-    title = "Relationship between Risk.DeepSurv and ExpMort.DeepSurv",
+    title = "Relationship between RMST.CoxTime and ExpMort.CoxTime",
     x = "AUSC (-sum (S(t) * dt))",
-    y = "Expected Mortality (RSF) "
+    y = "Expected Mortality "
+  ) +
+  theme_minimal()
+
+ggplot(folds_stacked_predictions, aes(x = RMST.DeepSurv, y = ExpMort.DeepSurv)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~ cv_fold) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Relationship between RMST..DeepSurv and ExpMort.DeepSurv",
+    x = "AUSC (-sum (S(t) * dt))",
+    y = "Expected Mortality  "
+  ) +
+  theme_minimal()
+
+ggplot(folds_stacked_predictions, aes(x = RMST.DeepHit, y = ExpMort.DeepHit)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~ cv_fold) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Relationship between RMST.DeepHit and ExpMort.DeepHit",
+    x = "AUSC (-sum (S(t) * dt))",
+    y = "Expected Mortality "
+  ) +
+  theme_minimal()
+
+ggplot(folds_stacked_predictions, aes(x = RMST.CoxPH, y = ExpMort.CoxPH)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~ cv_fold) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Relationship between RMST.CoxPH and ExpMort.CoxPH",
+    x = "AUSC (-sum (S(t) * dt))",
+    y = "Expected Mortality "
+  ) +
+  theme_minimal()
+
+ggplot(folds_stacked_predictions, aes(x = RMST.RSF, y = ExpMort.RSF)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~ cv_fold) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Relationship between RMST.RSF and ExpMort.RSF",
+    x = "AUSC (-sum (S(t) * dt))",
+    y = "Expected Mortality  "
   ) +
   theme_minimal()
 
@@ -800,7 +866,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   # Create empty lists to store results
   subset_expm <- list()
   subset_surv <- list()
-  #subset_risk <- list()
+  subset_risk <- list()
   # Create resample sets
   for (r in seq_along(resample_indices)) {
     subset_expm[[r]] <- get_model_preds2(stacked_predictions = stacked_predictions, 
@@ -813,7 +879,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
                   bootstrap_patient_ids = resample_indices[[r]])
     subset_risk[[r]] <- get_model_preds2(stacked_predictions = stacked_predictions,
                         model_names = "all",
-                        input_type = "RiskScore",
+                        input_type = "RMST",
                         bootstrap_patient_ids = resample_indices[[r]])
 
   }
@@ -927,7 +993,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
                                                 sksurv_tied_tol = 1e-8)
   }
     # Expected mortality and estimating C
-  select_risk <- grep("Risk\\.",colnames(subset_risk[[1]]), value = TRUE)
+  select_risk <- grep("RMST\\.",colnames(subset_risk[[1]]), value = TRUE)
   results_risk1 <- list() # boostrap results
   results_risk1_point_estim <- list() # point estimate results
   for (risk in select_risk) {
@@ -958,7 +1024,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
 
   }
 
-  select_risk <- grep("Risk\\.",colnames(subset_risk[[1]]), value = TRUE)
+  select_risk <- grep("RMST\\.",colnames(subset_risk[[1]]), value = TRUE)
   results_risk2 <- list() # boostrap results
   results_risk2_point_estim <- list() # point estimate
   for (risk in select_risk) {
@@ -997,7 +1063,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
                                                       sksurv_tied_tol = 1e-8)
   }
 
-  select_risk <- grep("Risk\\.",colnames(subset_risk[[1]]), value = TRUE)
+  select_risk <- grep("RMST\\.",colnames(subset_risk[[1]]), value = TRUE)
   results_risk3 <- list()
   results_risk3_point_estim <- list()
   for (risk in select_risk) {
@@ -1083,7 +1149,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
 ```
 
 
-```{r Plot results,  fig.width=13, fig.height=20}
+```{r Create plots}
 
 plot_list <- list()
 # Extract the plots
@@ -1108,9 +1174,9 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   expm_df_plot1 <- make_expm_plot_entries(results_expm1, results_expm1_point_estim)
   expm_df_plot2 <- make_expm_plot_entries(results_expm2,  results_expm2_point_estim)
   expm_df_plot3 <- make_expm_plot_entries(results_expm3,  results_expm3_point_estim)
-  risk_df_plot1 <- make_riskscore_plot_entries(results_risk1,  results_risk1_point_estim)
-  risk_df_plot2 <- make_riskscore_plot_entries(results_risk2,  results_risk2_point_estim)
-  risk_df_plot3 <- make_riskscore_plot_entries(results_risk3,  results_risk3_point_estim)
+  risk_df_plot1 <- make_rmst_plot_entries(results_risk1,  results_risk1_point_estim)
+  risk_df_plot2 <- make_rmst_plot_entries(results_risk2,  results_risk2_point_estim)
+  risk_df_plot3 <- make_rmst_plot_entries(results_risk3,  results_risk3_point_estim)
   surv_df_plot  <- make_surv_plot_entries(results_surv,  results_surv_point_estim)
 
   expm_df_plot1$Notation <- "C"
@@ -1132,16 +1198,19 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
     levels = c("C", "C_risk", "C_tau_10", "C_risk_tau_10", "C_tau", "C_risk_tau", "C_td"),
     labels = c(
       "tilde(C)~(Expected~Mortality)",
-      "tilde(C)~(RiskScore)",
+      "tilde(C)~(RMST)",
       "tilde(C)[tau]~(Expected~Mortality~tau==10~years)",
-      "tilde(C)[tau]~(RiskScore~tau==10~years)",
+      "tilde(C)[tau]~(RMST~tau==10~years)",
       "tilde(C)[tau]~(Expected~Mortality~tau==max*(T:~Delta==1))",
-      "tilde(C)[tau]~(RiskScore~tau==max*(T:~Delta==1))",
+      "tilde(C)[tau]~(RMST~tau==max*(T:~Delta==1))",
       "tilde(C)[td]~(Survival~Distribution)"
     )
   )
   
-  df_plot$Model <- factor(df_plot$Model, levels = c("DeepSurv", "CoxTime", "CoxPH", "RSF", "DeepHit"))
+  df_plot$Model[df_plot$Model == "CoxPH"] <- "CPH"
+  #df_plot$Model <- factor(df_plot$Model, levels = c("DeepSurv", "CoxTime", "CoxPH", "RSF", "DeepHit"))
+  df_plot$Model <- factor(df_plot$Model, levels = c("RSF", "CoxTime", 
+                                                     "DeepSurv", "CPH", "DeepHit"))
   
   df_plot$Metric <- factor(df_plot$Metric, levels = unique(df_plot$Metric))
   # Get numeric positions of each Metric for vertical lines
@@ -1195,12 +1264,111 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   
 }
 
-combined_plot <- wrap_plots(plot_list)
+#combined_plot <- wrap_plots(plot_list)
 #print(combined_plot)
 
 ```
 ```{r plot fold one, fig.width=12, fig.height=15}
 plot_list$fold_1 + theme(plot.title = element_blank())
+```
+```{r, fig.width=10, fig.height=10}
+for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
+  
+  results_risk1 = hold_results[[fold_n]]$results_risk1
+  results_risk2 = hold_results[[fold_n]]$results_risk2
+  results_risk3 = hold_results[[fold_n]]$results_risk3
+  results_surv = hold_results[[fold_n]]$results_surv
+
+  results_risk1_point_estim = hold_results[[fold_n]]$results_risk1_point_estim
+  results_risk2_point_estim = hold_results[[fold_n]]$results_risk2_point_estim
+  results_risk3_point_estim = hold_results[[fold_n]]$results_risk3_point_estim
+  results_surv_point_estim = hold_results[[fold_n]]$results_surv_point_estim
+
+  risk_df_plot1 <- make_rmst_plot_entries(results_risk1,  results_risk1_point_estim)
+  risk_df_plot2 <- make_rmst_plot_entries(results_risk2,  results_risk2_point_estim)
+  risk_df_plot3 <- make_rmst_plot_entries(results_risk3,  results_risk3_point_estim)
+  surv_df_plot  <- make_surv_plot_entries(results_surv,  results_surv_point_estim)
+
+  risk_df_plot1$Notation <- "C_risk"
+  risk_df_plot2$Notation <- "C_risk_tau"
+  risk_df_plot3$Notation <- "C_risk_tau_10"  
+  surv_df_plot$Notation  <- "C_td" 
+  
+  df_plot <- bind_rows(risk_df_plot1, risk_df_plot2, risk_df_plot3, surv_df_plot)
+  
+  df_plot$Metric <- sub("::.*", "", df_plot$Metric)
+  
+  df_plot$Notation <- factor(df_plot$Notation,
+    levels = c("C", "C_risk", "C_tau_10", "C_risk_tau_10", "C_tau", "C_risk_tau", "C_td"),
+    labels = c(
+      "tilde(C)~(Expected~Mortality)",
+      "tilde(C)~(RMST)",
+      "tilde(C)[tau]~(Expected~Mortality~tau==10~years)",
+      "tilde(C)[tau]~(RMST~tau==10~years)",
+      "tilde(C)[tau]~(Expected~Mortality~tau==max*(T:~Delta==1))",
+      "tilde(C)[tau]~(RMST~tau==max*(T:~Delta==1))",
+      "tilde(C)[td]~(Survival~Distribution)"
+    )
+  )
+  
+  df_plot$Model[df_plot$Model == "CoxPH"] <- "CPH"
+  #df_plot$Model <- factor(df_plot$Model, levels = c("DeepSurv", "CoxTime", "CoxPH", "RSF", "DeepHit"))
+  df_plot$Model <- factor(df_plot$Model, levels = c("RSF", "CoxTime", 
+                                                     "DeepSurv", "CPH", "DeepHit"))
+  
+  df_plot$Metric <- factor(df_plot$Metric, levels = unique(df_plot$Metric))
+  # Get numeric positions of each Metric for vertical lines
+  metric_levels <- levels(df_plot$Metric)
+  n_metrics <- length(metric_levels)
+  
+  # Define where to put the vertical lines between metrics
+  separator_positions <- seq(1.5, n_metrics - 0.5, by = 1)
+  
+  ### Version with color
+  p <- ggplot(df_plot, aes(x = Metric, y = cindex, color = Model)) +
+    geom_pointrange(aes(ymin = lower, ymax = upper),
+                    position = position_dodge(width = 0.4), size = 0.5) +
+    facet_wrap(~ Notation, nrow = 2, ncol=2, scales = "free_x", labeller = label_parsed)+
+    ylim(0.5, 0.75) +
+    geom_vline(xintercept = separator_positions, 
+                linetype = "dashed", color = "grey70") +
+     #geom_hline(linetype = "dashed", yintercept = 0.5) +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
+    labs(#title = paste0("Fold ", fold_n),
+         y = "C-index", x = NULL) +
+    theme_minimal(base_size = 14) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "bottom",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank())
+  
+  plot_list[[paste0("fold_", fold_n)]] <- p
+  
+  ### Version for paper
+  # p <- ggplot(df_plot, aes(x = Metric, y = cindex)) +
+  #   geom_pointrange(aes(ymin = lower, ymax = upper, shape=Model),
+  #                   position = position_dodge(width = 0.6), size = 0.5, color = "black") +
+  #   facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
+  #   scale_shape_manual(values = c("RSF" = 15, "DeepHit" = 23,
+  #                                  "CoxPH" = 19, "DeepSurv" = 22, "CoxTime" = 24)) +
+  #   geom_vline(xintercept = separator_positions,
+  #               linetype = "dashed", color = "grey70") +
+  #   ylim(0.5, 0.75) +
+  #   #geom_hline(linetype = "dashed", yintercept = 0.5) +
+  #   geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
+  #   labs(title = paste0("Fold ", fold_n),
+  #        y = "C-index", x = NULL) +
+  #   theme_minimal(base_size = 14) +
+  #   theme(axis.text.x = element_text(angle = 45, hjust = 1),
+  #         legend.position = "bottom",
+  #   panel.grid.major.x = element_blank(),
+  #   panel.grid.minor.x = element_blank())
+  # 
+  # plot_list[[paste0("fold_", fold_n)]] <- p
+  
+}
+
+plot_list$fold_1
 ```
 
 

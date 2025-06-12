@@ -1180,7 +1180,7 @@ load_synthetic_datasets <- function(file_path) {
   
 get_model_preds2 <- function(stacked_predictions, 
                              model_names = "all", 
-                             input_type = c("Distribution", "ExpectedMortality", "RiskAtT", "RiskScore"),
+                             input_type = c("Distribution", "ExpectedMortality", "RiskAtT", "RMST"),
                              specific_time = NULL, 
                              bootstrap_patient_ids = NULL) {
   
@@ -1201,8 +1201,8 @@ get_model_preds2 <- function(stacked_predictions,
       model_names <- unique(sub("\\..*", "", grep("^[A-Za-z]+\\.\\d+$", all_cols, value = TRUE)))
     } else if (input_type == "ExpectedMortality") {
       model_names <- unique(sub("Exp\\Mort\\.", "", grep("^Exp\\Mort\\.", all_cols, value = TRUE)))
-    } else if (input_type == "RiskScore") {
-      model_names <- unique(sub("Risk\\.", "", grep("^Risk\\.", all_cols, value = TRUE)))
+    } else if (input_type == "RMST") {
+      model_names <- unique(sub("RMST\\.", "", grep("^RMST\\.", all_cols, value = TRUE)))
     }
   }
   
@@ -1248,8 +1248,8 @@ get_model_preds2 <- function(stacked_predictions,
         stop("Missing columns: ", paste(missing_cols, collapse = ", "))
       }
       
-    } else if (input_type == "RiskScore") {
-      col_name <- paste0("Risk.", model)
+    } else if (input_type == "RMST") {
+      col_name <- paste0("RMST.", model)
       if (!col_name %in% names(df)) {
         stop("Missing column: ", col_name)
       }
@@ -1401,12 +1401,12 @@ make_surv_plot_entries <- function(results_list, point_estimate) {
   do.call(rbind, surv_entries)
 }
 
-make_riskscore_plot_entries <- function(results_list, point_estimate) {
+make_rmst_plot_entries <- function(results_list, point_estimate) {
   expm_entries <- lapply(names(results_list), function(name) {
     if (name == "batch.metrics") return(NULL)
     
     result <- results_list[[name]]
-    model <- sub("Risk\\.", "", name)
+    model <- sub("RMST\\.", "", name)
     metrics <- names(result$mean)
     
     entries <- lapply(seq_along(metrics), function(i) {
@@ -1421,7 +1421,7 @@ make_riskscore_plot_entries <- function(results_list, point_estimate) {
         cindex = mean_c,
         lower = ci[1],
         upper = ci[2],
-        InputType = "RiskScore",
+        InputType = "RMST",
         stringsAsFactors = FALSE
       )
     })
