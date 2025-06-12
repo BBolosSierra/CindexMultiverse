@@ -30,8 +30,9 @@ predDeepSurv <- as.matrix(predDeepSurv)
 predRSF <- as.matrix(predRSF)
 
 # Calculate expected mortality for each method
-expectedMort <- function(myPredictions) {
-  -sum(log(as.numeric(myPredictions)))
+expectedMort <- function(myPredictions, n = length(myPredictions)) {
+  myPredictions.trunc <- as.numeric(myPredictions[seq_len(n)])
+  -sum(log(myPredictions.trunc))
 }
 
 emCoxPH <- apply(predCoxPH, 1, expectedMort)
@@ -40,38 +41,30 @@ emDeepHit <- apply(predDeepHit, 1, expectedMort)
 emDeepSurv <- apply(predDeepSurv, 1, expectedMort)
 emRSF <- apply(predRSF, 1, expectedMort)
 
-em <- data.frame(
-  CoxPH = emCoxPH,
-  CoxTime = emCoxTime,
-  DeepHit = emDeepHit,
-  DeepSurv = emDeepSurv,
-  RSF = emRSF
-)
+emCoxPH_trunc <- apply(predCoxPH, 1, expectedMort, n = 100)
+emCoxTime_trunc <- apply(predCoxTime, 1, expectedMort, n = 100)
+emDeepHit_trunc <- apply(predDeepHit, 1, expectedMort, n = 100)
+emDeepSurv_trunc <- apply(predDeepSurv, 1, expectedMort, n = 100)
+emRSF_trunc <- apply(predRSF, 1, expectedMort, n = 100)
 
+# Comparison between my estimates and Bego's
 par(mfrow = c(2,3))
-
 plot(emCoxPH, folds_stacked_predictions$ExpMort.CoxPH)
 abline(a = 0, b = 1, col = "red")
-
 plot(emCoxTime, folds_stacked_predictions$ExpMort.CoxTime)
 abline(a = 0, b = 1, col = "red")
-
 plot(emDeepHit, folds_stacked_predictions$ExpMort.DeepHit)
 abline(a = 0, b = 1, col = "red")
-
 plot(emDeepSurv, folds_stacked_predictions$ExpMort.DeepSurv)
 abline(a = 0, b = 1, col = "red")
-
 plot(emRSF, folds_stacked_predictions$ExpMort.RSF)
 abline(a = 0, b = 1, col = "red")
 
-aux <- which(emDeepSurv - folds_stacked_predictions$ExpMort.DeepSurv != 0)
-aux2 <- folds_stacked_predictions[aux,] %>%
-  dplyr::select(starts_with("DeepSurv"))
 
 # Calculate expected mortality for each method
-AUSC <- function(myPredictions) {
-  -sum((as.numeric(myPredictions)))
+AUSC <- function(myPredictions, n = length(myPredictions)) {
+  myPredictions.trunc <- as.numeric(myPredictions[seq_len(n)])
+  -sum((as.numeric(myPredictions.trunc)))
 }
 
 auscCoxPH <- apply(predCoxPH, 1, AUSC)
@@ -80,27 +73,120 @@ auscDeepHit <- apply(predDeepHit, 1, AUSC)
 auscDeepSurv <- apply(predDeepSurv, 1, AUSC)
 auscRSF <- apply(predRSF, 1, AUSC)
 
+auscCoxPH_trunc <- apply(predCoxPH, 1, AUSC, n = 100)
+auscCoxTime_trunc <- apply(predCoxTime, 1, AUSC, n = 100)
+auscDeepHit_trunc <- apply(predDeepHit, 1, AUSC, n = 100)
+auscDeepSurv_trunc <- apply(predDeepSurv, 1, AUSC, n = 100)
+auscRSF_trunc <- apply(predRSF, 1, AUSC, n = 100)
+
+# Comparison between my estimates and Bego's
 par(mfrow = c(2,3))
 plot(auscCoxPH, folds_stacked_predictions$Risk.CoxPH)
 abline(a = 0, b = 1, col = "red")
-
 plot(auscCoxTime, folds_stacked_predictions$Risk.CoxTime)
 abline(a = 0, b = 1, col = "red")
-
 plot(auscDeepHit, folds_stacked_predictions$Risk.DeepHit)
 abline(a = 0, b = 1, col = "red")
-
 plot(auscDeepSurv, folds_stacked_predictions$Risk.DeepSurv)
 abline(a = 0, b = 1, col = "red")
-
-
-
 plot(auscRSF, folds_stacked_predictions$Risk.RSF)
 abline(a = 0, b = 1, col = "red")
 
-folds_stacked_predictions %>%
-  ggplot(aes(ExpMort.RSF, Risk.RSF)) +
+# Comparison between EM and AUSC - no truncation
+par(mfrow = c(2,3))
+plot(emCoxPH, auscCoxPH)
+plot(emCoxTime, auscCoxTime)
+plot(emDeepHit, auscDeepHit)
+plot(emDeepSurv, auscDeepSurv)
+plot(emRSF, auscRSF)
+
+# Comparison between EM and AUSC - truncation to first 100 time-points
+par(mfrow = c(2,3))
+plot(emCoxPH_trunc, auscCoxPH_trunc)
+plot(emCoxTime_trunc, auscCoxTime_trunc)
+plot(emDeepHit_trunc, auscDeepHit_trunc)
+plot(emDeepSurv_trunc, auscDeepSurv_trunc)
+plot(emRSF_trunc, auscRSF_trunc)
+
+## Check why there is not a 1-1 relationship using synthetic data
+n <- 200
+x <- matrix(0, ncol = n, nrow = 100) 
+for(i in 1:n) {
+  set.seed(i)
+  x[,i] <- sort(runif(100, min = 0, max = 1), decreasing = TRUE)
+}
+
+em.aux <- apply(x, 2, expectedMort)
+ausc.aux <- apply(x, 2, AUSC)
+
+df <- data.frame(index = 1:n,  
+                 em = em.aux,
+                 ausc = ausc.aux)
+
+df <- df %>%
+  arrange(em)
+
+df %>%
+  ggplot(aes(x = em, y = ausc)) +
   geom_point()
+
+head(df)
+
+par(mfrow = c(1,3))
+
+plot(x[,35], type = "l", col = "blue", 
+     main = "S(t)", ylab = "Value", lwd = 2)
+lines(x[,15], col = "red", lwd = 2)
+lines(x[,174], col = "green", lwd = 2)
+
+plot(cumsum(x[,35]), type = "l", col = "blue", 
+     main = "Cumulative sum of x", ylab = "Cumulative sum", lwd = 2)
+lines(cumsum(x[,15]), col = "red", lwd = 2)
+lines(cumsum(x[,174]), col = "green", lwd = 2)
+
+plot(cumsum(log(x[,35])), type = "l", col = "blue", 
+     main = "Cumulative sum of log(x)", ylab = "Cumulative sum", lwd = 2)
+lines(cumsum(log(x[,15])), col = "red", lwd = 2)
+lines(cumsum(log(x[,174])), col = "green", lwd = 2)
+
+
+par(mfrow = c(1,3))
+
+plot(x[,35], type = "l", col = "blue", 
+     main = "S(t)", ylab = "Value", lwd = 2)
+lines(x[,15], col = "red", lwd = 2)
+lines(x[,174], col = "green", lwd = 2)
+
+plot(cumsum(x[,35]), type = "l", col = "blue", 
+     xlim = c(80, 100), ylim = c(50, 60), 
+     main = "Cumulative sum of x", ylab = "Cumulative sum", lwd = 2)
+lines(cumsum(x[,15]), col = "red", lwd = 2)
+lines(cumsum(x[,174]), col = "green", lwd = 2)
+
+plot(cumsum(log(x[,35])), type = "l", col = "blue",
+     xlim = c(80, 100), ylim = c(-80,-30),
+     main = "Cumulative sum of -log(x)", ylab = "Cumulative sum", lwd = 2)
+lines(cumsum(log(x[,15])), col = "red", lwd = 2)
+lines(cumsum(log(x[,174])), col = "green", lwd = 2)
+
+par(mfrow = c(1,3))
+
+plot(x[,35], type = "l", col = "blue", 
+     main = "S(t)", ylab = "Value", lwd = 2)
+lines(x[,15], col = "red", lwd = 2)
+lines(x[,174], col = "green", lwd = 2)
+
+plot(cumsum(x[,35]), type = "l", col = "blue", 
+     xlim = c(90, 100), ylim = c(50, 60), 
+     main = "Cumulative sum of x", ylab = "Cumulative sum", lwd = 2)
+lines(cumsum(x[,15]), col = "red", lwd = 2)
+lines(cumsum(x[,174]), col = "green", lwd = 2)
+
+plot(cumsum(log(x[,35])), type = "l", col = "blue",
+     xlim = c(90, 100), ylim = c(-80,-50),
+     main = "Cumulative sum of -log(x)", ylab = "Cumulative sum", lwd = 2)
+lines(cumsum(log(x[,15])), col = "red", lwd = 2)
+lines(cumsum(log(x[,174])), col = "green", lwd = 2)
 
 ## Debugging 1.0 - early debugging of the expected mortality calculation
 
