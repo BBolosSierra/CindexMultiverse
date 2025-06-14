@@ -446,7 +446,7 @@ folds_stacked_predictions <- do.call(rbind, all_predictions)
 
 model_names <- c("RSF", "CoxPH", "DeepHit", "DeepSurv", "CoxTime")
 
-df <- stacked_predictions[, 1:4]
+df <- folds_stacked_predictions[, 1:4]
 
 for (model in model_names) {
   res <- compute_measures(folds_stacked_predictions, model)
