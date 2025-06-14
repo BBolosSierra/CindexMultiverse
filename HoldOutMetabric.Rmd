@@ -169,10 +169,13 @@ As the training of the models can take a long time, we save the results to an
 Rds file which we load here. We can use the results from 5-fold cross-validation and analyse each fold separately. 
 
 
-```{r load results}
-folds_stacked_predictions <-  readRDS("./Results/5FoldStackedPredictions2.rds")
 
-survival_curves <- readRDS("./Results/5FoldStackedPredictionsCurves2.rds")
+```{r load results}
+
+folds_stacked_predictions <-  readRDS("./Results/HoldOutStackedPredictions.rds")
+
+survival_curves <- readRDS("./Results/HoldOutStackedPredictionsCurves.rds")
+
 ```
 
 
@@ -445,7 +448,7 @@ for (k in 1:K) {
   # Calculate expected mortality
   if (any(as.vector(surv_deephit_int) == 0))  {
     cat("There is a 0 in Deephit survival preds \n")
-    second_smallest_survival_prob = unique(sort(as.vector(surv_deephit_int), partial = 2))[2]/10
+    second_smallest_survival_prob = unique(sort(as.vector(surv_deephit_int), partial = 2))[2]
     surv_deephit_int <- surv_deephit_int + second_smallest_survival_prob
   } 
   deephit_exp_mort <- rowSums(-log(surv_deephit_int))
@@ -491,8 +494,8 @@ for (k in 1:K) {
 
 folds_stacked_predictions <- do.call(rbind, all_predictions)
 
-#saveRDS(folds_stacked_predictions, "./Results/5FoldStackedPredictions2.rds")
-#saveRDS(survival_curves, "./Results/5FoldStackedPredictionsCurves2.rds")
+#saveRDS(folds_stacked_predictions, "./Results/HoldOutStackedPredictions.rds")
+#saveRDS(survival_curves, "./Results/HoldOutStackedPredictionsCurves.rds")
 ```
 
 ```{r Plot expected mortality, fig.height=10, fig.width=8}
@@ -747,7 +750,6 @@ Here, we plot the predicted survival curves
 
 ```{r survival curves, fig.height=11, fig.width=10}
 
-#survival_curves <- readRDS("./Results/5FoldStackedPredictionsCurves.rds")
 p1 <- plot_survival_curves(survival_curves[[1]]$DeepHit, title = "DeepHit", seed=123)
 p2 <- plot_survival_curves(survival_curves[[1]]$DeepSurv, title = "DeepSurv", seed=123)
 p3 <- plot_survival_curves(survival_curves[[1]]$CoxPH, title = "CPH", seed=123)
@@ -997,7 +999,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   results_risk1 <- list() # boostrap results
   results_risk1_point_estim <- list() # point estimate results
   for (risk in select_risk) {
-     cat("Calculating bootstrap for ExpMort for Model = ", risk, "\n")
+     cat("Calculating bootstrap for RMST for Model = ", risk, "\n")
      # Bootstrap
      results_risk1[[risk]] <- bootstrap.metric.parallel(metrics.wrapper,
                                     dataset=list(
@@ -1028,7 +1030,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   results_risk2 <- list() # boostrap results
   results_risk2_point_estim <- list() # point estimate
   for (risk in select_risk) {
-     cat("Calculating bootstrap for ExpMort for Model = ", risk, "\n")
+     cat("Calculating bootstrap for RMST for Model = ", risk, "\n")
     # Bootstrap
      results_risk2[[risk]] <- bootstrap.metric.parallel(metrics.wrapper,
                                     dataset=list(
@@ -1067,7 +1069,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
   results_risk3 <- list()
   results_risk3_point_estim <- list()
   for (risk in select_risk) {
-    cat("Calculating bootstrap for ExpMort for Model = ", risk, "\n")
+    cat("Calculating bootstrap for RMST for Model = ", risk, "\n")
     # Bootstrap
     results_risk3[[risk]] <- bootstrap.metric.parallel(metrics.wrapper,
                                     dataset=list(
@@ -1145,7 +1147,7 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
 
 }
 
-#saveRDS(hold_results, "./Results/holdout_CindexResults2.rds")
+#saveRDS(hold_results, "./Results/holdout_CindexResults.rds")
 ```
 
 
@@ -1268,8 +1270,12 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
 #print(combined_plot)
 
 ```
-```{r plot fold one, fig.width=12, fig.height=15}
+```{r plot by fold, fig.width=12, fig.height=15}
 plot_list$fold_1 + theme(plot.title = element_blank())
+plot_list$fold_2 + theme(plot.title = element_blank())
+plot_list$fold_3 + theme(plot.title = element_blank())
+plot_list$fold_4 + theme(plot.title = element_blank())
+plot_list$fold_5 + theme(plot.title = element_blank())
 ```
 ```{r, fig.width=10, fig.height=10}
 for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
@@ -1369,6 +1375,10 @@ for (fold_n in unique(folds_stacked_predictions$cv_fold)) {
 }
 
 plot_list$fold_1
+plot_list$fold_2
+plot_list$fold_3
+plot_list$fold_4
+plot_list$fold_5
 ```
 
 

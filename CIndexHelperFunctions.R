@@ -503,6 +503,8 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
     # Need to create this survival object: 
     surv_obj = Surv(time, censoring)
     # Calculate the metric
+    # t_star is only used to extract surv at a specific time point
+    # not to calculate 
     results[["SurvMetrics::Cindex"]] <-
       SurvMetrics::Cindex(surv_obj, predicted=1-predicted, 
                           t_star = eval.times)[[1]]
@@ -1699,3 +1701,24 @@ extract_batch_metrics <- function(results_list) {
   return(metrics_df)
 }
 
+
+compute_measures <- function(df, model_name, time_step = 1) {
+  model_cols <- grep(paste0("^", model_name, "\\."), names(df), value = TRUE)
+  surv_mat <- as.matrix(df[, model_cols])
+  
+  rmst <- (-rowSums(surv_mat) * time_step)
+  
+  if (any(as.vector(surv_mat) == 0))  {
+    cat("There is a 0 ", model_name," survival preds \n")
+    second_smallest_survival_prob = unique(sort(as.vector(surv_mat), partial = 2))[2]
+    surv_mat <- surv_mat + second_smallest_survival_prob
+  } else {
+    surv_mat <- surv_mat
+  }
+  exp_mort <- rowSums(-log(surv_mat))
+  
+  return(list(rmst = rmst,
+              exp_mort = exp_mort,
+              surv_mat = surv_mat)
+  )
+}
