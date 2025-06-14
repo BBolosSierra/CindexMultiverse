@@ -9,7 +9,7 @@ date: "2025-04-15"
 
 Load libraries
 
-```{r, include=FALSE}
+```{r imports, include=FALSE}
 # Survival metrics
 library(reticulate)
 library(arrow)
@@ -37,6 +37,7 @@ library(pysurvivalR)
 library(survivalmodels)
 library(tidyr)
 library(ggplot2)
+library(patchwork)
 ```
 
 
@@ -57,12 +58,21 @@ Sys.setenv(OPENBLAS_NUM_THREADS = "1")  # Limits OpenBLAS to 1 thread
 #py_config()
 ```
 
+We also load a set of helper functions used throuhgout our analysis:
 
-Instead of using the one from DeepSurv, we will use our own data:
+```{r load functions}
+source("./CindexHelperFunctions.R")
+```
 
-```{r}
+## Load the data
+
+Here, we load the pre-processed METABRIC data that was generated using the 
+`preprocessing_biocportal_metabric.R` script.
+
+```{r load data}
 # read the processed file
-mb <- read.table("./Datasets/metabric_preprocess_multiverse.csv", sep="," , header = TRUE)
+mb <- read.table("./Datasets/metabric_preprocess_multiverse.csv", 
+                 sep = "," , header = TRUE)
 
 # Keep the id as index
 rownames(mb) <- mb$PATIENT_ID
@@ -70,135 +80,105 @@ rownames(mb) <- mb$PATIENT_ID
 # Remove the id column
 mb <- mb[,2:12]
 
-# Sote the previous colnames to keep track of them
-cols <- colnames(mb)
+# Mapping
+var_map <- c(
+  "MKI67" = "X1",
+  "EGFR" = "X2",
+  "ERBB2" = "X3",
+  "PGR" = "X4",
+  "HORMONE_THERAPY" = "X5",
+  "RADIO_THERAPY" = "X6",
+  "CHEMOTHERAPY" = "X7",
+  "ER_IHC" = "X8",
+  "AGE_AT_DIAGNOSIS" = "X9",
+  "OS_MONTHS" = "time",
+  "OS_STATUS" = "status"
+)
 
-# Asign new column names
-newcols <- c("X1", "X2", "X3", "X4","X5", "X6", "X7", "X8", "X9", "time", "status")
-colnames(mb) <- newcols
-
-# NO NEED OF SUMING, there is no 0s... 
-min(mb$time)
-#mb$time <- mb$time + 1e-8
-
-# Order according to time and status
-mb[order(mb$time, -mb$status),]
-
-```
-
-```{r}
-source("./CindexHelperFunctions.R")
-```
+# Mapping colnames
+names(mb)[names(mb) %in% names(var_map)] <- var_map[names(mb)[names(mb) %in% names(var_map)]]
 
 
-```{r, fig.height=6, fig.width=7}
-
-fit <- prodlim(Hist(time, status) ~ 1, data = mb, reverse = TRUE)
-
-plot(fit,
-     xlab = "Time (months)",
-     ylab = "Censoring probability",
-     confint = TRUE,
-     legend = FALSE,
-     col = "black",
-     lwd = 2)
-
-tmp <- mb
-
-tmp$censor.status <- ifelse(tmp$status %in% c(1, 2), 1, 0)
-
-tmp <- tmp[order(tmp$time),]
-
-weight.i <- pec::ipcw(formula=Surv(time,censor.status)~1,
-                 data=tmp,
-                 method="marginal",
-                 times=unique(tmp$time),
-                 subjectTimes=tmp$time, 
-                 what = "IPCW.subjectTimes")$IPCW.subjectTimes
-weight.j <- pec::ipcw(formula=Surv(time,censor.status)~1,
-                 data=tmp,
-                 method="marginal",
-                 times=unique(tmp$time),
-                 subjectTimes=tmp$time,
-                 subjectTimesLag=0,
-                 what="IPCW.times")$IPCW.times
+summary(mb$time)
 
 
-time_points <- unique(tmp$time)
-
-plot(time_points, weight.j,
-     type = "l",
-     col = "black",
-     lwd = 2,
-     xlab = "Time",
-     ylab = expression(G[2](t) == (1 / w[t])^2),
-     main = expression("Variation of " ~ G[2](t) ~ "over time"))
-
-# Compute G2
-IPCW <- 1 / weight.j^2
-
-# Plot G2 vs time
-plot(time_points, IPCW,
-     type = "l",
-     col = "black",
-     lwd = 2,
-     xlab = "Time")
-
-# Compute G2
-IPCW<- (1 / weight.j)^2
-
-# Plot G2 vs time
-plot(time_points, log(IPCW),
-     type = "l",
-     col = "black",
-     lwd = 2,
-     xlab = "Time")
-
-
+#mb <- mb[order(mb$time, -mb$status),]
 ```
 
 
+The data contains information about `r nrow(mb)` individuals, with 
+`r sum(mb$status == 1)` events and `r sum(mb$status == 0)` censored 
+observations. The survival times are measured in months.
 
+## Evaluation of predictive performance using a data holdout approach
 
+Here, we will evaluate the predictive performance of various survival models 
+using a holdout approach. We will split the data into a training set (80%) and a 
+test set (20%), fit the models on the training set, and then evaluate their 
+performance on the test set. We repeated this 5 times to ensure robustness of 
+the results. The data splits used here match the ones used in the 5-fold 
+cross-validation results. For each data split, bootstrap samples of the test set
+will be generated to estimate the uncertainty of the estimated C-index values. 
 
-#### CROSSVALIDATION ONCE
+### Model hyperparameters
 
-Predict on the k-test fold out of 5 folds with different models
-
-For the hyperparameters of deep learning models that have been trained with survivalmodels package is relevant to look at the pytorch optimizer: https://raphaels1.github.io/survivalmodels/reference/get_pycox_optim.html 
+For the hyperparameters of deep learning models that have been trained with 
+`survivalmodels` package is relevant to look at the pytorch optimizer: https://raphaels1.github.io/survivalmodels/reference/get_pycox_optim.html 
 
 Also the parameters for each model:
+
 1) Deephit: https://raphaels1.github.io/survivalmodels/reference/deephit.html
 2) DeepSurv: https://raphaels1.github.io/survivalmodels/reference/deepsurv.html
 3) CoxTime: https://raphaels1.github.io/survivalmodels/reference/coxtime.html
 
-\begin{table}[ht]
+In our analysis, we consider the same hyperparameter values used when analysing
+the METABRIC in the original publications for DeepHit, DeepSurv, and CoxTime. 
+For RSF, we use the default hyperparameters from the `randomForestSRC` package.
+
+
+\begin{table}[H]
 \centering
-\begin{tabular}{@{}lccc@{}}
+\begin{tabular}{@{}lcccc@{}}
 \toprule
-\textbf{Hyper-parameter}     & \textbf{DeepSurv} & \textbf{CoxTime} & \textbf{DeepHit}  & RandomForest \\ \midrule
-Optimizer                    & adam              & adam             & adam              & NA \\
-Activation                   & selu              & relu             & relu              & NA\\
+\textbf{Hyper-parameter}     & \textbf{DeepSurv} & \textbf{Cox-Time} & \textbf{DeepHit}  &  \textbf{RSF} \\ \midrule
+Optimizer                    & adam              & adam             & adam              & - \\
+Activation                   & selu              & relu             & relu              & -\\
 \# Dense Layers              & 1                 & 2                & 2                 & - \\
 \# Nodes / Layer             & 41                & 32, 32           & 32, 32            & 100 trees\\
-Learning Rate                & 0.0103            & 0.01             & 0.001             & NA \\
-L2 Reg (weight\_decay)       & 0                 & 0                & 0                 & NA \\
-Dropout                      & 0.1601            & 0.1              & 0.6               & NA \\
-LR Decay                     & 0.00417           & 0                & 0                 & NA \\
-Batch Norm                   & True              & True             & True              & NA \\
-Batch Size                   & 256               & 256              & 50                & NA \\
-Epochs                       & 500               & 512              & 100               & NA \\
-Early Stopping               & False             & True             & True              & NA \\
-mod\_alpha                   & NA                & NA               & 0.2               & NA \\
-sigma                        & NA                & NA               & 0.1               & NA \\
-cuts                         & NA                & NA               & 300               & NA \\ \bottomrule
+Learning Rate                & 0.0103            & 0.01             & 0.001             & - \\
+Dropout                      & 0.1601            & 0.1              & 0.6               & - \\
+LR Decay                     & 0.00417           & 0                & 0                 & - \\
+Batch Norm                   & True             & True             & True              & - \\
+Batch Size                   & 256               & 256              & 50                & - \\
+Epochs                       & 500               & 512              & 100               & - \\
+Early Stopping               & False             & True             & True              & - \\
+mod\_alpha                   & -                & -               & 0.2               & - \\
+sigma                        & -                & -               & 0.1               & - \\
+cuts                         & -                & -               & 300               & - \\ \bottomrule
 \end{tabular}
-\caption{Hyperparameters across DeepSurv, CoxTime, and DeepHit models.}
-\label{tab:hyperparams_comparison}
+\caption{Hyperparameters across DeepSurv, Cox-Time, DeepHit and RSF. For DeepSurv, Cox-Time and DeepHit, hyperparameters were specified as in the analysis of the METABRIC data presented in the corresponding original publications.}
+\label{tab:hyperparams}
 \end{table}
 
-```{r, eval=FALSE}
 
+### Model training
+
+As the training of the models can take a long time, we save the results to an 
+Rds file which we load here. We can use the results from 5-fold cross-validation and analyse each fold separately. 
+
+
+```{r load results}
+# stored now in here.
+stacked_predictions <-  readRDS("./Results/5foldCV_MetabricStackedPredictions.rds")
+
+survival_curves <- readRDS("./Results/5foldCV_MetabricSurvivalCurves.rds")
+```
+
+
+Run the following if were to train on a random split. 
+
+
+```{r model predictions, eval=FALSE}
 ## Reproducibility
 reset_torch_seed <- function(seed = 123) {
   reticulate::py_run_string(sprintf("
@@ -265,15 +245,13 @@ for (k in 1:K) {
   mb_test[, numeric_cols]  <- scale(mb_test[, numeric_cols],
                                     center = means, scale = sds)
 
-  #t_train_max <- max(mb_train$time)
-  mb_train$time <- mb_train$time / t_train_max
-  mb_test$time <- mb_test$time / t_train_max
+  mb_train$time <- mb_train$time
+  mb_test$time <- mb_test$time
   
   # Extract only the covariates used for predictions
   test_covariates <- mb_test[, c("X1", "X2", "X3", "X4",
                                  "X5", "X6", "X7", "X8", "X9")]
-  # intervals for prediction scaled
-  approx_seq <- ts_scaled / t_train_max
+
   # Fit models
   #cat("Dataset:", i, ".", j, '\n')
   cat("Fold:", k, '\n')
@@ -286,27 +264,25 @@ for (k in 1:K) {
   cat('Test set censoring:', mean(mb_test$status == 0)*100, '\n')
   cat('\n')
   
-  
   # 1) Random Forest:
   # Fit the model
   rf <- randomForestSRC::rfsrc(Surv(time, status) ~ X1 + X2 +
                                  X3 + X4 + X5 + X6 + 
                                  X7 + X8 + X9, 
-                               data = mb_train, ntree = 100)
+                               data = mb_train, 
+                               ntree = 100, 
+                               ntime = 1400)
   # Predict survival object
   surv_rf_object <- predict(rf, newdata = mb_test, type = "surv")
   surv_rf <- surv_rf_object$survival
-  time_grid <- surv_rf_object$time.interest# * t_train_max
+  time_grid <- surv_rf_object$time.interest
   # Interpolate to have same times in all survival curves
   surv_rf_int <- apply(surv_rf, 1, function(s){
-    approx(x = time_grid, y=s, xout = approx_seq, rule = 2)$y
+    approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
   })
   surv_rf_int <- t(surv_rf_int)
   rownames(surv_rf_int) <- rownames(mb_test)
   colnames(surv_rf_int) <- ts_scaled
-  # Calculate expected mortality
-  rf_exp_mort <- rowSums(-log(pmax(surv_rf_int, 1e-10)))
-
   
   # 2) Predict risk Cox PH
   # Fit with cox ph 
@@ -318,17 +294,15 @@ for (k in 1:K) {
   # Predict survival object
   sf <- survfit(cox_ph, newdata = mb_test)
   surv_cox <- t(sf$surv)
-  time_grid <- sf$time #* t_train_max
+  time_grid <- sf$time 
   #Interpolate
   surv_cox_int <- apply(surv_cox, 1, function(s){
-     approx(x = time_grid, y=s, xout = approx_seq, rule = 2)$y
+     approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
   })
   
   surv_cox_int <- t(surv_cox_int)
   rownames(surv_cox_int) <- rownames(mb_test)
   colnames(surv_cox_int)  <- ts_scaled
-  # Calculate expected mortality
-  cox_exp_mort <- rowSums(-log(pmax(surv_cox_int, 1e-10)))
 
   reset_torch_seed()
   
@@ -345,31 +319,25 @@ for (k in 1:K) {
                                              activation = "selu", 
                                              batch_norm = TRUE,
                                              num_nodes = c(41), 
-                                             #verbose = TRUE,
-                                             batch_size = 256L, # ? default, nowhere to be found
+                                             batch_size = 256L, 
                                              learning_rate = 0.010289691253027908, 
                                              lr_decay = 0.0041685546875, 
-                                             momentum =  0.8439658203125,# if adam this is not used, is used for sgd
-                                             #weight_decay = 1.269e-3, # ? weight_decay > 0 for L2 regularization
+                                             momentum =  0.8439658203125,
                                              #weight_decay = 10.890986328125, # this is too high it cannot be 
                                              epochs = 500) 
   # Predict survival object
   surv_deepsurv <- predict(deepsurv_model,
                            newdata = mb_test, type = "surv")
-  time_grid <- as.numeric(colnames(surv_deepsurv))# * t_train_max
-  
+  time_grid <- as.numeric(colnames(surv_deepsurv))
   # Interpolate
   surv_deepsurv_int <- apply(surv_deepsurv, 1, function(s){
-    approx(x = time_grid, y=s, xout = approx_seq, rule = 2)$y
+    approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
   })
   surv_deepsurv_int <- t(surv_deepsurv_int)
   rownames(surv_deepsurv_int) <- rownames(mb_test)
   colnames(surv_deepsurv_int) <- ts_scaled
-  # Calculate expected mortality
-  deepsurv_exp_mort <- rowSums(-log(pmax(surv_deepsurv_int, 1e-10)))
   
   reset_torch_seed()
-  
   # 4) Coxtime
   # Hyperparameters from:
   # https://github.com/havakv/pycox/blob/3eccdd7fd9844a060f50fdcc315659f33a2d2dc1/examples/cox-time.ipynb
@@ -393,26 +361,18 @@ for (k in 1:K) {
   # Predict survival object
   surv_coxtime <- predict(coxtime_model,
                           newdata = mb_test, type = "surv")
-  time_grid <-  as.numeric(colnames(surv_coxtime))# * t_train_max
+  time_grid <-  as.numeric(colnames(surv_coxtime))
   # Interpolate
   surv_coxtime_int <- apply(surv_coxtime, 1, function(s){
-    approx(x = time_grid, y=s, xout = approx_seq, rule = 2)$y
+    approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
   })
   surv_coxtime_int <- t(surv_coxtime_int)
   rownames(surv_coxtime_int) <- rownames(mb_test)
   colnames(surv_coxtime_int) <- ts_scaled
-  # Calculate expected mortality
-  coxtime_exp_mort <- rowSums(-log(pmax(surv_coxtime_int, 1e-10)))
-  
-  
-  # scale back the train time too 
-  mb_train$time <- mb_train$time * t_train_max
-  mb_test$time <- mb_test$time * t_train_max
   
   reset_torch_seed()
   
   # 5) Deephit
-  # Original scale for times applied 
   # Hyperparameters: https://github.com/havakv/pycox/blob/3eccdd7fd9844a060f50fdcc315659f33a2d2dc1/examples/deephit.ipynb and DeepHit paper, and also double checked with DeSurv paper (some parameters are slightly different)
   deephit_model <- survivalmodels::deephit(Surv(time, status) ~ 
                              X1 + X2 + 
@@ -424,10 +384,11 @@ for (k in 1:K) {
                              num_nodes = c(32L, 32L), # in ipynb and DeSurv
                              batch_norm = TRUE, # in ipynb
                              dropout = 0.6, #  0.1 in ipynb and 0.6 in DeepHit paper
-                             cuts = 300, # in DeSurv and DeepHit, 10 and interpolation in ipynb
+                             #cuts = 1400, # in DeSurv and DeepHit, 10 and interpolation in ipynb
                              mod_alpha = 0.2, # in DeSurv, ipynb
                              early_stopping = TRUE, # in DeepHit and ipynb
                              #tolerance = 3,
+                             cuts = 1400,
                              sigma = 0.1, # in DeSurv and ipynb
                              batch_size = 50, # 50 in Deephit, 256 in ipynb
                              epochs = 100, # in ipynb
@@ -447,9 +408,7 @@ for (k in 1:K) {
   surv_deephit_int <- t(surv_deephit_int)
   rownames(surv_deephit_int) <- rownames(mb_test)
   colnames(surv_deephit_int) <- ts_scaled
-  # Calculate expected mortality
-  deephit_exp_mort <- rowSums(-log(pmax(surv_deephit_int, 1e-10)))
-  
+
 
   # Gather the survival survs too
   survival_curves[[k]] <- list(patients_ids = rownames(mb_test),
@@ -466,11 +425,6 @@ for (k in 1:K) {
                              patients_ids = rownames(mb_test), 
                              test_time = mb_test$time,
                              test_status = mb_test$status,
-                             ExpMort.RSF = rf_exp_mort,
-                             ExpMort.CoxPH = cox_exp_mort,
-                             ExpMort.DeepHit = deephit_exp_mort,
-                             ExpMort.DeepSurv = deepsurv_exp_mort,
-                             ExpMort.CoxTime = coxtime_exp_mort,
                              RSF = as.data.frame(surv_rf_int),
                              CoxPH = as.data.frame(surv_cox_int),
                              DeepHit = as.data.frame(surv_deephit_int), 
@@ -484,25 +438,44 @@ for (k in 1:K) {
 
 }
 
-stacked_predictions <- do.call(rbind, all_predictions)
+folds_stacked_predictions <- do.call(rbind, all_predictions)
+
+```
+
+```{Expected mortality and rmst r}
+
+model_names <- c("RSF", "CoxPH", "DeepHit", "DeepSurv", "CoxTime")
+
+df <- stacked_predictions[, 1:4]
+
+for (model in model_names) {
+  res <- compute_measures(folds_stacked_predictions, model)
+  df[[paste0("ExpMort.", model)]] <- res$exp_mort
+  df[[paste0("RMST.", model)]] <- res$rmst
+  
+  surv_mat <- as.data.frame(res$surv_mat)
+  
+  df <- cbind(df, surv_mat)
+}
+
+stacked_predictions <- df
 
 
 #saveRDS(stacked_predictions, "./Results/5foldCV_MetabricStackedPredictions.rds")
 #saveRDS(survival_curves, "./Results/5foldCV_MetabricSurvivalCurves.rds")
 ```
 
+```{r survival curves, fig.height=11, fig.width=10}
 
+p1 <- plot_survival_curves(survival_curves[[1]]$DeepHit, title = "DeepHit", seed=123)
+p2 <- plot_survival_curves(survival_curves[[1]]$DeepSurv, title = "DeepSurv", seed=123)
+p3 <- plot_survival_curves(survival_curves[[1]]$CoxPH, title = "CoxPH", seed=123)
+p4 <- plot_survival_curves(survival_curves[[1]]$Coxtime, title = "CoxTime", seed=123)
+p5 <- plot_survival_curves(survival_curves[[1]]$RSF, title = "RSF", seed=123)
 
-```{r}
-# Plot 
-plot_survival_curves(survival_curves[[1]]$DeepHit, title = "DeepHit Survival Curves")
-plot_survival_curves(survival_curves[[1]]$DeepSurv, title = "DeepSurv Survival Curves")
-plot_survival_curves(survival_curves[[1]]$CoxPH, title = "Cox PH Survival Curves")
-plot_survival_curves(survival_curves[[1]]$Coxtime, title = "Cox Time Survival Curves")
-plot_survival_curves(survival_curves[[1]]$RSF, title = "RSF Survival Curves")
+(p1 | p2) / (p3 | p4) / (p5 | patchwork::plot_spacer()) + plot_layout(guides = "collect") & theme(legend.position = "bottom")
+
 ```
-
-
 
 Need to be able to calculate the C-index in 3 different ways: 
 
@@ -515,7 +488,7 @@ And a summary distribution like median times...
 
 
 Create bootstrap samples of 1000 patients each
-```{r, eval=FALSE}
+```{r create samples, eval=FALSE}
 # TEST
 
 set.seed(123)
@@ -535,17 +508,15 @@ resample_indices <- replicate(n_bootstraps,
 ```
 
 
-### Study 1: 
+### Study 1: Risk at t
 
 Try to see how the change RiskAtT for several Ts affects the C-index. Do evaluation at different time points.
 
 For that we can do Harrels to have sth that does not change with time, then the ones that require tau.
 
-```{r}
+```{r select columns for bootstrap}
 
 subset_risk <- list()
-#subset_expm <- list()
-#subset_surv <- list()
 
 ts = sort(unique(round(mb$time)))
 for (r in seq_along(resample_indices)) {
@@ -554,47 +525,21 @@ for (r in seq_along(resample_indices)) {
                  input_type = "RiskAtT",
                  specific_time = append(10, ts[seq(51, length(ts), by = 50)]), # 36 time points
                  bootstrap_patient_ids = resample_indices[[r]])
-  # subset_expm[[r]] <- get_model_preds2(stacked_predictions = stacked_predictions, 
-  #                 model_names = "all",
-  #                 input_type = "ExpectedMortality",
-  #                 bootstrap_patient_ids = resample_indices[[r]]) #is the expected mortality sum up until that time
-  # subset_surv[[r]] <- get_model_preds2(stacked_predictions = stacked_predictions,
-  #               model_names = "all",
-  #               input_type = "Distribution",
-  #               bootstrap_patient_ids = resample_indices[[r]])
-  
 }
 ```
 
 
-```{r}
+```{r cindex estimate boostrap and point estimate, eval=FALSE}
 ### need to create a list for all the models? 
 selected_risk <- colnames(subset_risk[[1]])[4:length(colnames(subset_risk[[1]]))]
 
-results_risk_t <- list()
-results_risk_tau_median <- list()
+# Create lists
+results_risk_tau_10y <- list()
 results_risk_tau_maxUT <- list()
+results_risk_tau_10y_pe <- list()
+results_risk_tau_maxUT_pe <- list()
+# Loop
 for (riskT in selected_risk) {
-   # t <- as.numeric(sub(".*\\.", "", riskT))
-   # cat("Calculating bootstrap at eval.time = ", t, 
-   #     "for Model = ", riskT, "\n")
-   # Predictions at different time points, and evaluation at those time points. 
-   # results_risk_t[[riskT]] <- bootstrap.metric.parallel(metrics.wrapper,
-   #                                dataset=list(
-   #                                   predicted = riskT,
-   #                                   censoring = "test_status",
-   #                                   time = "test_time"),
-   #                                implementation = list("Hmisc::rcorr.cens",
-   #                                                      "pysurvival",
-   #                                                      "survC1::Est.Cval", 
-   #                                                      "pec::cindex", 
-   #                                                      "SurvMetrics::Cindex", 
-   #                                                      "lifelines", 
-   #                                                      "sksurv.censored", 
-   #                                                      "survival.n", 
-   #                                                      "survival.n/G2"), # add more
-   #                                eval.times = t, # or set t to sth else
-   #                                sampled_data = subset_risk)
    cat("Calculating bootstrap at eval.time = ", median(ts), 
        "for Model = ", riskT, "\n")
    # Predictions at different times, tau at median times. 
@@ -614,9 +559,21 @@ for (riskT in selected_risk) {
                                                         "survival.n/G2"),
                                   eval.times = 120,
                                   sampled_data = subset_risk)
+   results_risk_tau_10y_pe[[riskT]] <- metrics.wrapper(predicted = 1-stacked_predictions[[riskT]], 
+                                                          censoring = stacked_predictions$test_status, 
+                                                          time = stacked_predictions$test_time, 
+                                                          implementation = list("Hmisc::rcorr.cens",
+                                                                                "pysurvival",
+                                                                                "survC1::Est.Cval",
+                                                                                "pec::cindex",
+                                                                                "SurvMetrics::Cindex",
+                                                                                "lifelines",
+                                                                                "sksurv.censored",
+                                                                                "survival.n",
+                                                                                "survival.n/G2"), 
+                                                          eval.times = 120)
    # Predictions at different times, tau at maximum uncensored time
-   cat("Calculating bootstrap at eval.time = ", 
-       round(max(mb$time[mb$status == 1])), "for Model = ", riskT, "\n")
+   cat("Calculating bootstrap at eval.time max uncensored time by samplefor Model = ", riskT, "\n")
    results_risk_tau_maxUT[[riskT]] <- bootstrap.metric.parallel(metrics.wrapper,
                                   dataset=list(
                                      predicted = riskT,
@@ -631,177 +588,176 @@ for (riskT in selected_risk) {
                                                         "sksurv.censored", 
                                                         "survival.n", 
                                                         "survival.n/G2"),
-                                  eval.times = round(max(mb$time[mb$status == 1])), 
+                                  eval.times = "resample_max_uncensored_time", 
                                   sampled_data = subset_risk)
-   
+   results_risk_tau_maxUT_pe[[riskT]] <- metrics.wrapper(predicted = 1-stacked_predictions[[riskT]], 
+                                                          censoring = stacked_predictions$test_status, 
+                                                          time = stacked_predictions$test_time, 
+                                                          implementation = list("Hmisc::rcorr.cens",
+                                                                                "pysurvival",
+                                                                                "survC1::Est.Cval",
+                                                                                "pec::cindex",
+                                                                                "SurvMetrics::Cindex",
+                                                                                "lifelines",
+                                                                                "sksurv.censored",
+                                                                                "survival.n",
+                                                                                "survival.n/G2"), 
+                                                          eval.times = "resample_max_uncensored_time")
 
 }
 
 
 ```
 
-```{r}
+```{r save object}
 # saveRDS(
 #    list(
-#      results_risk_t = results_risk_t,
+#      # results_risk_t = results_risk_t,
 #      results_risk_tau_maxUT = results_risk_tau_maxUT,
-#      results_risk_tau_10y = results_risk_tau_10y
+#      results_risk_tau_10y = results_risk_tau_10y,
+#      results_risk_tau_maxUT_pe = results_risk_tau_maxUT_pe,
+#      results_risk_tau_10y_pe = results_risk_tau_10y_pe
 #    ),
 #    "./Results/results_5fold_multipletimes.rds"
 #  )
 
 obj <- readRDS("./Results/results_5fold_multipletimes.rds")
 
-results_risk_t = obj$results_risk_t
+#results_risk_t = obj$results_risk_t
 results_risk_tau_maxUT = obj$results_risk_tau_maxUT
 results_risk_tau_10y = obj$results_risk_tau_10y
+results_risk_tau_maxUT_pe = obj$results_risk_tau_maxUT_pe
+results_risk_tau_10y_pe = obj$results_risk_tau_10y_pe
 ```
 
-```{r}
+```{r Plot formatting}
 # Make format for plotting
-risk_t_plot        <- make_risk_plot_entries(results_risk_t)
-risk_tau_maxU_plot <- make_risk_plot_entries(results_risk_tau_maxUT)
-risk_tau_10_plot   <- make_risk_plot_entries(results_risk_tau_10y)
+#risk_t_plot        <- make_risk_plot_entries(results_risk_t)
+risk_tau_maxU_plot <- make_risk_plot_entries(results_risk_tau_maxUT, results_risk_tau_maxUT_pe)
+risk_tau_10_plot   <- make_risk_plot_entries(results_risk_tau_10y, results_risk_tau_10y_pe)
 
 ```
 
 
-```{r, fig.height=8, fig.width=10}
-
+```{r Plot risk at max uncensored, fig.height=10, fig.width=8}
 
 ggplot(risk_tau_maxU_plot, aes(x = as.numeric(Time), y = cindex, color = Model, group = Model)) +
   geom_line(linewidth = 1) +
   geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3) +
   facet_wrap(~ Metric) +
-  ylim(0.5, 0.72) +
+  #ylim(0.5, 0.72) +
   theme_minimal(base_size = 12) +
-  labs(x = "Time (t)", y = "C-index", color = "Model",
-       title = "Model Performance for Risk at t (tau as max of uncensored time)") +
+  labs(x = "Time (t)", y = "C-index", color = "Implementation",
+       title = "") +
   theme(legend.position = "bottom",
         axis.text.x = element_text(angle = 45, hjust = 1))
 
 
 ggplot(risk_tau_maxU_plot[(risk_tau_maxU_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_maxU_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, color = Metric, group = Metric)) +
-  geom_line(linewidth = 1) +
-  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3) +
-  facet_wrap(~ Model) +
+  geom_line(linewidth = 1, position = position_dodge(width = 0.3)) +
+  geom_errorbar(
+    position = position_dodge(width = 0.4),
+    aes(ymin = lower, ymax = upper)
+  ) +
+  geom_point(position = position_dodge(0.4)) +
+  facet_wrap(~ Model, ncol = 2) +
   ylim(0.5, 0.72) +
   theme_minimal(base_size = 12) +
-  labs(x = "Time (t)", y = "C-index", color = "Model",
-       title = "Model Performance for Risk at t (tau as max of uncensored time)") +
+  labs(x = "Time (t)", y = "C-index", color = "Implementation",
+       title = "") +
   theme(legend.position = "bottom",
         axis.text.x = element_text(angle = 45, hjust = 1))
 
 ggplot(risk_tau_maxU_plot[(risk_tau_maxU_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_maxU_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, shape = Metric, group = Metric)) +
-  geom_line(linewidth = 1) +
-  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.5) +
-  facet_wrap(~ Model) +
+  geom_line(linewidth = 1, position = position_dodge(width = 0.3)) +
+  geom_errorbar(
+    position = position_dodge(width = 0.4),
+    aes(ymin = lower, ymax = upper)
+  ) +
+  geom_point(position = position_dodge(0.4)) +
+  facet_wrap(~ Model, ncol = 2) +
   ylim(0.5, 0.72) +
-  theme_minimal(base_size = 12) +
-  labs(x = "Time (t)", y = "C-index", color = "Model",
-       title = "Model Performance for Risk at t (tau as max of uncensored time)") +
+  theme_minimal(base_size = 14) +
+  labs(x = "Time (t)", y = "C-index", color = "Implementation",
+       title = "") +
   theme(legend.position = "bottom",
         axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 
-```{r, fig.height=8, fig.width=10}
-library(stringr)
+```{r Plot risk at 10 years, fig.height=8, fig.width=10}
 
 ggplot(risk_tau_10_plot, aes(x = as.numeric(Time), y = cindex, color = Model, group = Model)) +
-  geom_line(linewidth = 1) +
-  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3) +
-  facet_wrap(~ Metric) +
+  geom_line(linewidth = 1, position = position_dodge(width = 0.3)) +
+  geom_errorbar(
+    position = position_dodge(width = 0.4),
+    aes(ymin = lower, ymax = upper)
+  ) +
+  geom_point(position = position_dodge(0.4)) +
+  facet_wrap(~ Model, ncol = 2) +
+  ylim(0.5, 0.72) +
   ylim(0.5, 0.72) +
   theme_minimal(base_size = 12) +
   labs(x = "Time (t)", y = "C-index", color = "Model",
-       title = "Model Performance for Risk at t (tau = 10y)") +
+       title = "") +
   theme(legend.position = "bottom",
         axis.text.x = element_text(angle = 45, hjust = 1))
 
 ggplot(risk_tau_10_plot[(risk_tau_10_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_10_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, color = Metric, group = Metric)) +
-  geom_line(linewidth = 1) +
-  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3) +
-  facet_wrap(~ Model) +
+  geom_line(linewidth = 1, position = position_dodge(width = 0.3)) +
+  geom_errorbar(
+    position = position_dodge(width = 0.4),
+    aes(ymin = lower, ymax = upper)
+  ) +
+  geom_point(position = position_dodge(0.4)) +
+  facet_wrap(~ Model, ncol = 2) +
   ylim(0.5, 0.72) +
   theme_minimal(base_size = 12) +
   labs(x = "Time (t)", y = "C-index", color = "Model",
-       title = "Model Performance for Risk at t (tau = 10y)") +
+       title = "") +
   theme(legend.position = "bottom",
         axis.text.x = element_text(angle = 45, hjust = 1))
 
 ggplot(risk_tau_10_plot[(risk_tau_10_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_10_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, shape = Metric, group = Metric)) +
-  geom_line(linewidth = 1) +
-  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.5) +
-  facet_wrap(~ Model) +
+  geom_line(linewidth = 1, position = position_dodge(width = 0.3)) +
+  geom_errorbar(
+    position = position_dodge(width = 0.4),
+    aes(ymin = lower, ymax = upper)
+  ) +
+  geom_point(position = position_dodge(0.4)) +
+  facet_wrap(~ Model, ncol = 2) +
   ylim(0.5, 0.72) +
   theme_minimal(base_size = 12) +
   labs(x = "Time (t)", y = "C-index", color = "Model",
-       title = "Model Performance for Risk at t (tau = 10y)") +
+       title = "") +
   theme(legend.position = "bottom",
         axis.text.x = element_text(angle = 45, hjust = 1))
 
 ```
 
-
-
-```{r, fig.height=8, fig.width=10}
-library(stringr)
-
-ggplot(risk_t_plot, aes(x = as.numeric(Time), y = cindex, color = Model, group = Model)) +
-  geom_line(linewidth = 1) +
-  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3) +
-  facet_wrap(~ Metric, ) +
-  ylim(0.5, 0.72) +
-  theme_minimal(base_size = 12) +
-  labs(x = "Time (t)", y = "C-index", color = "Model",
-       title = "Model Performance for Risk at t (tau = t)") +
-  theme(legend.position = "bottom",
-        axis.text.x = element_text(angle = 45, hjust = 1))
-
-ggplot(risk_tau_10_plot[(risk_t_plot$Metric == "Hmisc::rcorr.cens" |
-                           risk_t_plot$Metric == "pec::cindex"),], 
-       aes(x = as.numeric(Time), y = cindex, color = Metric, group = Metric)) +
-  geom_line(linewidth = 1) +
-  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3) +
-  facet_wrap(~ Model) +
-  ylim(0.5, 0.72) +
-  theme_minimal(base_size = 12) +
-  labs(x = "Time (t)", y = "C-index", color = "Model",
-       title = "Model Performance for Risk at t (tau = t)") +
-  theme(legend.position = "bottom",
-        axis.text.x = element_text(angle = 45, hjust = 1))
-
-ggplot(risk_tau_10_plot[(risk_t_plot$Metric == "Hmisc::rcorr.cens" |
-                           risk_t_plot$Metric == "pec::cindex"),], 
-       aes(x = as.numeric(Time), y = cindex, shape = Metric, group = Metric)) +
-  geom_line(linewidth = 1) +
-  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.5) +
-  facet_wrap(~ Model) +
-  ylim(0.5, 0.72) +
-  theme_minimal(base_size = 12) +
-  labs(x = "Time (t)", y = "C-index", color = "Model",
-       title = "Model Performance for Risk at t (tau = t)") +
-  theme(legend.position = "bottom",
-        axis.text.x = element_text(angle = 45, hjust = 1))
-
-
-```
-
-
-### Study 2
+### Study 2: RMST, Expected mortality and Survival distribution as input
 
 
 For the paper, digestible analysis C, C_tau and Ctd
-```{r}
+
+```{r load results}
 # saveRDS(
 #    list(
 #      results_risk1 = results_risk1,
-#      results_risk2  = results_risk2,
+#      results_risk2 = results_risk2,
+#      results_risk3 = results_risk3,
 #      results_expm1 = results_expm1,
 #      results_expm2 = results_expm2,
 #      results_expm3 = results_expm3,
-#      results_surv = results_surv
+#      results_surv = results_surv, 
+#      results_risk1_point_estim = results_risk1_point_estim,
+#      results_risk2_point_estim = results_risk2_point_estim,
+#      results_risk3_point_estim = results_risk3_point_estim,
+#      results_expm1_point_estim = results_expm1_point_estim,
+#      results_expm2_point_estim = results_expm2_point_estim,
+#      results_expm3_point_estim = results_expm3_point_estim,
+#      results_surv_point_estim = results_surv_point_estim
+#      
 #    ),
 #    "./Results/results_5fold_facet_plots.rds"
 #  )
@@ -810,32 +766,54 @@ results <- readRDS("./Results/results_5fold_facet_plots.rds")
 
 results_risk1 = results$results_risk1
 results_risk2 = results$results_risk2
+results_risk3 = results$results_risk3
 results_expm1 = results$results_expm1
 results_expm2 = results$results_expm2
 results_expm3 = results$results_expm3
 results_surv  = results$results_surv
 
 
+results_risk1_point_estim = results$results_risk1_point_estim
+results_risk2_point_estim = results$results_risk2_point_estim
+results_risk3_point_estim = results$results_risk3_point_estim
+results_expm1_point_estim = results$results_expm1_point_estim
+results_expm2_point_estim = results$results_expm2_point_estim
+results_expm3_point_estim = results$results_expm3_point_estim
+results_surv_point_estim = results$results_surv_point_estim
+
 
 ```
 
 ```{r}
-stacked_predictions <- readRDS("./Results/5foldCV_MetabricStackedPredictions.rds")
-
+#stacked_predictions <- readRDS("./Results/5FoldStackedPredictions.rds")
 ```
 
+```{r create samples, eval=FALSE}
+# TEST
 
-```{r}
-subset_risk_10 <- list()
+set.seed(123)
+
+#subset_stacked <- stacked_predictions[(stacked_predictions$cv_repeat == 1),]
+
+# Number of bootstrapps
+n_bootstraps <- 100
+# Size of boostrapped sample
+size_sample <- 1000
+
+# re sample by patient id
+resample_indices <- replicate(n_bootstraps, 
+                              sample(stacked_predictions$patients_ids, 
+                                     size = size_sample, replace = TRUE), 
+                              simplify = FALSE)
+```
+
+```{r select columns}
+
 subset_expm <- list()
 subset_surv <- list()
+subset_risk <- list()
 
 for (r in seq_along(resample_indices)) {
-  subset_risk_10[[r]] <- get_model_preds2(stacked_predictions = stacked_predictions, 
-                 model_names = "all",
-                 input_type = "RiskAtT",
-                 specific_time = c(60), # 5 years
-                 bootstrap_patient_ids = resample_indices[[r]])
   subset_expm[[r]] <- get_model_preds2(stacked_predictions = stacked_predictions, 
                  model_names = "all",
                  input_type = "ExpectedMortality",
@@ -844,58 +822,16 @@ for (r in seq_along(resample_indices)) {
                 model_names = "all",
                 input_type = "Distribution",
                 bootstrap_patient_ids = resample_indices[[r]])
-  
+  subset_risk[[r]] <- get_model_preds2(stacked_predictions = stacked_predictions,
+                      model_names = "all",
+                      input_type = "RMST",
+                      bootstrap_patient_ids = resample_indices[[r]])
   
 }
 ```
 
 
-```{r}
-selected_models <- colnames(subset_risk_10[[1]])[4:length(colnames(subset_risk_10[[1]]))]
-
-results_risk1 <- list()
-for (model in selected_models) {
-   t <- as.numeric(sub(".*\\.", "", model))
-   cat("Calculating bootstrap at eval.time = ", t, "for Model = ", model, "\n")
-   results_risk1[[model]] <- bootstrap.metric.parallel(metrics.wrapper,
-                                  dataset=list(
-                                     predicted = model,
-                                     censoring = "test_status",
-                                     time = "test_time"),
-                                  implementation = list("Hmisc::rcorr.cens",
-                                                        "pysurvival",
-                                                        "SurvMetrics::Cindex", 
-                                                        "lifelines", 
-                                                        "sksurv.censored"),
-                                  eval.times = round(max(mb$time[mb$status == 1])), # or set t to sth else
-                                  sampled_data = subset_risk_10)
-
-}
-
-results_risk2 <- list()
-for (model in selected_models) {
-   t <- as.numeric(sub(".*\\.", "", model))
-   cat("Calculating bootstrap at eval.time = ", t, "for Model = ", model, "\n")
-   results_risk2[[model]] <- bootstrap.metric.parallel(metrics.wrapper,
-                                  dataset=list(
-                                     predicted = model,
-                                     censoring = "test_status",
-                                     time = "test_time"),
-                                  implementation = list("survC1::Est.Cval", 
-                                                        "pec::cindex",
-                                                        "survival.n", 
-                                                        "survival.n/G2"),
-                                  eval.times = round(max(mb$time[mb$status == 1])), # or set t to sth else
-                                  sampled_data = subset_risk_10)
-
-}
-
-```
-
-exp
-
-
-```{r}
+```{r cindex expected mortality, eval=FALSE}
 select_exps <- grep("ExpMort\\.",colnames(subset_expm[[1]]), value = TRUE)
 results_expm1 <- list()
 results_expm1_point_estim <- list()
@@ -950,11 +886,13 @@ for (exps in select_exps) {
                                                         "pec::cindex",
                                                         "survival.n", 
                                                         "survival.n/G2"), 
-                                                      eval.times = round(max(mb$time[mb$status == 1])))
+                                                      eval.times =
+                                                        "resample_max_uncensored_time")
 }
 
 select_exps <- grep("ExpMort\\.",colnames(subset_expm[[1]]), value = TRUE)
 results_expm3 <- list()
+results_expm3_point_estim <- list()
 for (exps in select_exps) {
    cat("Calculating bootstrap for ExpMort for Model = ", exps, "\n")
    results_expm3[[exps]] <- bootstrap.metric.parallel(metrics.wrapper,
@@ -979,8 +917,98 @@ for (exps in select_exps) {
                                                     eval.times = 120)
 }
 ```
+```{r cindex rmst, eval=FALSE}
+select_risk <- grep("RMST\\.",colnames(subset_risk[[1]]), value = TRUE)
+results_risk1 <- list() # boostrap results
+results_risk1_point_estim <- list() # point estimate results
+for (risk in select_risk) {
+   cat("Calculating bootstrap for RMST for Model = ", risk, "\n")
+   # Bootstrap
+   results_risk1[[risk]] <- bootstrap.metric.parallel(metrics.wrapper,
+                                  dataset=list(
+                                     predicted = risk,
+                                     censoring = "test_status",
+                                     time = "test_time"),
+                                  implementation = list("Hmisc::rcorr.cens",
+                                                        "pysurvival",
+                                                        "SurvMetrics::Cindex",
+                                                        "lifelines",
+                                                        "sksurv.censored"),
+                                  eval.times = NULL, #C
+                                  sampled_data = subset_risk)
+   # Point estimate
+   results_risk1_point_estim[[risk]] <- metrics.wrapper(predicted = stacked_predictions[[risk]],
+                                                        censoring = stacked_predictions$test_status,
+                                                        time = stacked_predictions$test_time,
+                                                        implementation = list("Hmisc::rcorr.cens",
+                                                        "pysurvival",
+                                                        "SurvMetrics::Cindex",
+                                                        "lifelines",
+                                                        "sksurv.censored"),
+                                                        eval.times = NULL)
 
-```{r}
+}
+
+select_risk <- grep("RMST\\.",colnames(subset_risk[[1]]), value = TRUE)
+results_risk2 <- list() # boostrap results
+results_risk2_point_estim <- list() # point estimate
+for (risk in select_risk) {
+   cat("Calculating bootstrap for  RMST for Model = ", risk, "\n")
+  # Bootstrap
+   results_risk2[[risk]] <- bootstrap.metric.parallel(metrics.wrapper,
+                                  dataset=list(
+                                     predicted = risk,
+                                     censoring = "test_status",
+                                     time = "test_time"),
+                                  implementation = list("pec::cindex",
+                                                        "survC1::Est.Cval",
+                                                        "survival.n",
+                                                        "survival.n/G2"),
+                                  #eval.times = round(max(mb$time[mb$status == 1])),
+                                  eval.times = "resample_max_uncensored_time",
+                                  sampled_data = subset_risk)
+    # Point estimate
+   results_risk2_point_estim[[risk]] <- metrics.wrapper(predicted = stacked_predictions[[risk]],
+                                                    censoring = stacked_predictions$test_status,
+                                                    time = stacked_predictions$test_time,
+                                                    implementation = list("pec::cindex",
+                                                        "survC1::Est.Cval",
+                                                        "survival.n",
+                                                        "survival.n/G2"),
+                                                    #eval.times =  round(max(mb$time[mb$status == 1])),
+                                                    eval.times = "resample_max_uncensored_time")
+}
+
+select_risk <- grep("RMST\\.",colnames(subset_risk[[1]]), value = TRUE)
+results_risk3 <- list()
+results_risk3_point_estim <- list()
+for (risk in select_risk) {
+  cat("Calculating bootstrap for  RMST for Model = ", risk, "\n")
+  # Bootstrap
+  results_risk3[[risk]] <- bootstrap.metric.parallel(metrics.wrapper,
+                                  dataset=list(
+                                     predicted = risk,
+                                     censoring = "test_status",
+                                     time = "test_time"),
+                                  implementation = list("pec::cindex",
+                                                        "survC1::Est.Cval",
+                                                        "survival.n",
+                                                        "survival.n/G2"),
+                                  eval.times = 120, # 10 years
+                                  sampled_data = subset_risk)
+   # Point estimate
+   results_risk3_point_estim[[risk]] <- metrics.wrapper(predicted = stacked_predictions[[risk]],
+                                              censoring = stacked_predictions$test_status,
+                                              time = stacked_predictions$test_time,
+                                              implementation = list("pec::cindex",
+                                                  "survC1::Est.Cval",
+                                                  "survival.n",
+                                                  "survival.n/G2"),
+                                              eval.times =  120)
+}
+```
+
+```{r cindex survival distribution}
 model_names <- unique(sub("\\..*", "", grep("^[A-Za-z]+\\.\\d+$",
                                             colnames(subset_surv[[1]]), value = TRUE)))
 results_surv <- list()
@@ -1008,32 +1036,52 @@ for (model in model_names) {
 ```
 
 
-```{r, fig.width=12.5, fig.height=6}
+
+
+```{r Extract info and Plot,  fig.width=12, fig.height=15}
 # Extract the plots
-expm_df_plot1 <- make_expm_plot_entries(results_expm1, results_expm1_point_estim)
+expm_df_plot1 <- make_expm_plot_entries(results_expm1,  results_expm1_point_estim)
 expm_df_plot2 <- make_expm_plot_entries(results_expm2,  results_expm2_point_estim)
 expm_df_plot3 <- make_expm_plot_entries(results_expm3,  results_expm3_point_estim)
-surv_df_plot  <- make_surv_plot_entries(results_surv,  results_surv_point_estim)
+surv_df_plot  <- make_surv_plot_entries(results_surv,   results_surv_point_estim)
+risk_df_plot1 <- make_rmst_plot_entries(results_risk1,  results_risk1_point_estim)
+risk_df_plot2 <- make_rmst_plot_entries(results_risk2,  results_risk2_point_estim)
+risk_df_plot3 <- make_rmst_plot_entries(results_risk3,  results_risk3_point_estim)
+surv_df_plot  <- make_rmst_plot_entries(results_surv,   results_surv_point_estim)
 
 expm_df_plot1$Notation <- "C"
 expm_df_plot2$Notation <- "C_tau"
-expm_df_plot3$Notation <- "C_tau_10"  # if needed
-surv_df_plot$Notation  <- "C_td"  # or whatever makes sense
+expm_df_plot3$Notation <- "C_tau_10"  
+risk_df_plot1$Notation <- "C_risk"
+risk_df_plot2$Notation <- "C_risk_tau"
+risk_df_plot3$Notation <- "C_risk_tau_10"  
+surv_df_plot$Notation  <- "C_td" 
 
-df_plot <- bind_rows(expm_df_plot1, expm_df_plot2, expm_df_plot3, surv_df_plot)
+
+df_plot <- bind_rows(expm_df_plot1, risk_df_plot1, 
+                     expm_df_plot2, risk_df_plot2, 
+                     expm_df_plot3, risk_df_plot3,
+                     surv_df_plot)
+
 df_plot$Metric <- sub("::.*", "", df_plot$Metric)
 
 df_plot$Notation <- factor(df_plot$Notation,
-  levels = c("C", "C_tau_10", "C_tau", "C_td"),
+  levels = c("C", "C_risk", "C_tau_10", "C_risk_tau_10", "C_tau", "C_risk_tau", "C_td"),
   labels = c(
     "tilde(C)~(Expected~Mortality)",
+    "tilde(C)~(RMST)",
     "tilde(C)[tau]~(Expected~Mortality~tau==10~years)",
+    "tilde(C)[tau]~(RMST~tau==10~years)",
     "tilde(C)[tau]~(Expected~Mortality~tau==max*(T:~Delta==1))",
+    "tilde(C)[tau]~(RMST~tau==max*(T:~Delta==1))",
     "tilde(C)[td]~(Survival~Distribution)"
   )
 )
 
-df_plot$Model <- factor(df_plot$Model, levels = c("DeepSurv", "CoxTime", "CoxPH", "RSF", "DeepHit"))
+df_plot$Model[df_plot$Model == "CoxPH"] <- "CPH"
+#df_plot$Model <- factor(df_plot$Model, levels = c("DeepSurv", "CoxTime", "CoxPH", "RSF", "DeepHit"))
+df_plot$Model <- factor(df_plot$Model, levels = c("RSF", "CoxTime", 
+                                                   "DeepSurv", "CPH", "DeepHit"))
 
 df_plot$Metric <- factor(df_plot$Metric, levels = unique(df_plot$Metric))
 # Get numeric positions of each Metric for vertical lines
@@ -1047,10 +1095,11 @@ separator_positions <- seq(1.5, n_metrics - 0.5, by = 1)
  ggplot(df_plot, aes(x = Metric, y = cindex, color = Model)) +
   geom_pointrange(aes(ymin = lower, ymax = upper),
                   position = position_dodge(width = 0.4), size = 0.5) +
-   facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
-   geom_vline(xintercept = separator_positions, 
+  facet_wrap(~ Notation, nrow = 4, ncol = 2, scales = "free_x", labeller = label_parsed)+
+  geom_vline(xintercept = separator_positions, 
               linetype = "dashed", color = "grey70") +
-  #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
+  ylim(0.5, 0.75) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
   labs(title = "",
        y = "C-index", x = NULL) +
   theme_minimal(base_size = 14) +
@@ -1059,36 +1108,16 @@ separator_positions <- seq(1.5, n_metrics - 0.5, by = 1)
   panel.grid.major.x = element_blank(),
   panel.grid.minor.x = element_blank())
  
-
-#ggsave("./Results/PaperTables/ExpectedMortalityBlack.png", plot = p, width = 12, height = 6, dpi = 300)
-```
-```{r, fig.width=12, fig.height=10}
-
- ggplot(df_plot, aes(x = Metric, y = cindex, color = Model)) +
-  geom_pointrange(aes(ymin = lower, ymax = upper),
-                  position = position_dodge(width = 0.4), size = 0.5) +
-   facet_wrap(~ Notation, nrow = 2, ncol = 2, scales = "free_x", labeller = label_parsed)+
-   geom_vline(xintercept = separator_positions, 
-              linetype = "dashed", color = "grey70") +
-  #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
-  labs(title = "",
-       y = "C-index", x = NULL) +
-  theme_minimal(base_size = 14) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom",
-  panel.grid.major.x = element_blank(),
-  panel.grid.minor.x = element_blank())
- 
-### Version for paper
-p <- ggplot(df_plot, aes(x = Metric, y = cindex)) +
+ggplot(df_plot, aes(x = Metric, y = cindex)) +
   geom_pointrange(aes(ymin = lower, ymax = upper, shape=Model),
                   position = position_dodge(width = 0.6), size = 0.5, color = "black") +
-   facet_wrap(~ Notation,  nrow = 2, ncol = 2, scales = "free_x", labeller = label_parsed)+
+   facet_wrap(~ Notation,  nrow = 4, ncol = 2, scales = "free_x", labeller = label_parsed)+
    scale_shape_manual(values = c("RSF" = 15, "DeepHit" = 23, 
                                  "CoxPH" = 19, "DeepSurv" = 22, "CoxTime" = 24)) +
    geom_vline(xintercept = separator_positions, 
               linetype = "dashed", color = "grey70") +
-   #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
+   geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
+   ylim(0.5, 0.75) +
    labs(title = "",
        y = "C-index", x = NULL) +
    theme_minimal(base_size = 19) +
@@ -1097,9 +1126,9 @@ p <- ggplot(df_plot, aes(x = Metric, y = cindex)) +
   panel.grid.major.x = element_blank(),
   panel.grid.minor.x = element_blank())
 
-print(p)
 ```
-```{r}
+
+```{r Look at cindex distributions }
 hist(as.numeric(results_expm2[["ExpMort.RSF"]][["batch.metrics"]][, "pec::cindex"]))
 hist(as.numeric(results_expm2[["ExpMort.CoxPH"]][["batch.metrics"]][, "pec::cindex"]))
 hist(as.numeric(results_expm2[["ExpMort.DeepHit"]][["batch.metrics"]][, "pec::cindex"]))
@@ -1113,76 +1142,76 @@ hist(as.numeric(results_surv[["DeepHit"]][["batch.metrics"]][, "pycox.Ant"]))
 
 ```{r, fig.width=12, fig.height=6}
 
-risk_df_plot1 <- make_risk_plot_entries(results_risk1)
-risk_df_plot2 <- make_risk_plot_entries(results_risk2)
-
-risk_df_plot1$Notation <- "C"
-risk_df_plot2$Notation <- "C_tau"
-surv_df_plot$Notation  <- "C_td"  # or whatever makes sense
-
-df_plot <- bind_rows(risk_df_plot1, risk_df_plot2, surv_df_plot)
-df_plot$Metric <- sub("::.*", "", df_plot$Metric)
-
-df_plot$Notation <- factor(df_plot$Notation,
-  levels = c("C", "C_tau", "C_td"),
-  labels = c( "tilde(C)~(Risk~at~t==5~years)",
-              "tilde(C)[tau]~(Risk~at~t==5~years~tau==max*(T:~Delta==1))",
-              "tilde(C)[td]~(Survival~Distribution)"
-  )
-)
-
-df_plot$Model <- factor(df_plot$Model, levels = c("DeepSurv", "CoxTime", "CoxPH", "RSF", "DeepHit"))
-
-df_plot$Metric <- factor(df_plot$Metric, levels = unique(df_plot$Metric))
-# Get numeric positions of each Metric for vertical lines
-metric_levels <- levels(df_plot$Metric)
-n_metrics <- length(metric_levels)
-
-# Define where to put the vertical lines between metrics
-separator_positions <- seq(1.5, n_metrics - 0.5, by = 1)
-
-### Version with color
- ggplot(df_plot, aes(x = Metric, y = cindex, color = Model)) +
-  geom_pointrange(aes(ymin = lower, ymax = upper),
-                  position = position_dodge(width = 0.4), size = 0.5) +
-   facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
-   geom_vline(xintercept = separator_positions, 
-              linetype = "dashed", color = "grey70") +
-  #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
-  labs(title = "",
-       y = "C-index", x = NULL) +
-  theme_minimal(base_size = 14) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom",
-  panel.grid.major.x = element_blank(),
-  panel.grid.minor.x = element_blank())
- 
-### Version for paper
-p <- ggplot(df_plot, aes(x = Metric, y = cindex)) +
-  geom_pointrange(aes(ymin = lower, ymax = upper, shape=Model),
-                  position = position_dodge(width = 0.6), size = 0.5, color = "black") +
-   facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
-   scale_shape_manual(values = c("RSF" = 15, "DeepHit" = 23, 
-                                 "CoxPH" = 19, "DeepSurv" = 22, "CoxTime" = 24)) +
-   geom_vline(xintercept = separator_positions, 
-              linetype = "dashed", color = "grey70") +
-   #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
-   labs(title = "",
-       y = "C-index", x = NULL) +
-   theme_minimal(base_size = 14) +
-   theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom",
-  panel.grid.major.x = element_blank(),
-  panel.grid.minor.x = element_blank())
-
-print(p)
+# risk_df_plot1 <- make_risk_plot_entries(results_risk1)
+# risk_df_plot2 <- make_risk_plot_entries(results_risk2)
+# 
+# risk_df_plot1$Notation <- "C"
+# risk_df_plot2$Notation <- "C_tau"
+# surv_df_plot$Notation  <- "C_td"  # or whatever makes sense
+# 
+# df_plot <- bind_rows(risk_df_plot1, risk_df_plot2, surv_df_plot)
+# df_plot$Metric <- sub("::.*", "", df_plot$Metric)
+# 
+# df_plot$Notation <- factor(df_plot$Notation,
+#   levels = c("C", "C_tau", "C_td"),
+#   labels = c( "tilde(C)~(Risk~at~t==5~years)",
+#               "tilde(C)[tau]~(Risk~at~t==5~years~tau==max*(T:~Delta==1))",
+#               "tilde(C)[td]~(Survival~Distribution)"
+#   )
+# )
+# 
+# df_plot$Model <- factor(df_plot$Model, levels = c("DeepSurv", "CoxTime", "CoxPH", "RSF", "DeepHit"))
+# 
+# df_plot$Metric <- factor(df_plot$Metric, levels = unique(df_plot$Metric))
+# # Get numeric positions of each Metric for vertical lines
+# metric_levels <- levels(df_plot$Metric)
+# n_metrics <- length(metric_levels)
+# 
+# # Define where to put the vertical lines between metrics
+# separator_positions <- seq(1.5, n_metrics - 0.5, by = 1)
+# 
+# ### Version with color
+#  ggplot(df_plot, aes(x = Metric, y = cindex, color = Model)) +
+#   geom_pointrange(aes(ymin = lower, ymax = upper),
+#                   position = position_dodge(width = 0.4), size = 0.5) +
+#    facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
+#    geom_vline(xintercept = separator_positions, 
+#               linetype = "dashed", color = "grey70") +
+#   #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
+#   labs(title = "",
+#        y = "C-index", x = NULL) +
+#   theme_minimal(base_size = 14) +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1),
+#         legend.position = "bottom",
+#   panel.grid.major.x = element_blank(),
+#   panel.grid.minor.x = element_blank())
+#  
+# ### Version for paper
+# p <- ggplot(df_plot, aes(x = Metric, y = cindex)) +
+#   geom_pointrange(aes(ymin = lower, ymax = upper, shape=Model),
+#                   position = position_dodge(width = 0.6), size = 0.5, color = "black") +
+#    facet_wrap(~ Notation, nrow = 1, scales = "free_x", labeller = label_parsed)+
+#    scale_shape_manual(values = c("RSF" = 15, "DeepHit" = 23, 
+#                                  "CoxPH" = 19, "DeepSurv" = 22, "CoxTime" = 24)) +
+#    geom_vline(xintercept = separator_positions, 
+#               linetype = "dashed", color = "grey70") +
+#    #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
+#    labs(title = "",
+#        y = "C-index", x = NULL) +
+#    theme_minimal(base_size = 14) +
+#    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+#         legend.position = "bottom",
+#   panel.grid.major.x = element_blank(),
+#   panel.grid.minor.x = element_blank())
+# 
+# print(p)
 
 ```
 
 
-### Study 3:
+### Table with results (this is not run)
 
-Trying different implementations:
+Gather all the results
 
 ```{r}
 a <- make_expm_table(results_expm1)
@@ -1193,14 +1222,6 @@ c$InputType <- "Exp.Mort tau=max(T, delta=1)"
 d <- make_surv_table(results_surv)
 
 ```
-
-
-
-
-### Table with results
-
-Gather all the results
-
 
 ```{r}
 df_combined <- bind_rows(a, b, c, d)
@@ -1255,5 +1276,115 @@ writeLines(latex_code, "Paper/Tables/results_table5fold.tex")
 
 ```
 
+```{r}
+library(randomForestSRC)
+library(survival)
+library(ggplot2)
 
+# Fixed train/test split
+set.seed(42)
+
+idx <- sample(seq_len(nrow(mb)), 0.8 * nrow(mb))
+mb_train <- mb[idx, ]
+mb_test <- mb[-idx, ]
+
+# Ground truth for concordance
+target <- Surv(mb_test$time, mb_test$status)
+
+# Range of ntime values
+ntime_vals <- seq(10, 1400, by = 50)
+
+# Store results
+results <- data.frame(
+  ntime = integer(),
+  cindex_chf = numeric(),
+  cindex_logsurv = numeric()
+)
+
+for (ntime_val in ntime_vals) {
+  cat("Running model for ntime =", ntime_val, "\n")
+  
+  rf <- rfsrc(Surv(time, status) ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8 + X9,
+              data = mb_train,
+              ntree = 500,
+              ntime = ntime_val)
+  
+  p_rsf <- predict(rf, newdata = mb_test, outcome = "test")
+  
+  # Compute concordance from CHF
+  cindex_chf <- concordance(target ~ rowSums(p_rsf$chf), reverse = TRUE)$concordance
+  
+  # Compute concordance from -log(survival)
+  cindex_logsurv <- concordance(target ~ rowSums(-log(p_rsf$survival)), reverse = TRUE)$concordance
+  
+  # Store
+  results <- rbind(results, data.frame(
+    ntime = ntime_val,
+    cindex_chf = cindex_chf,
+    cindex_logsurv = cindex_logsurv
+  ))
+}
+
+# Reshape for plotting
+library(reshape2)
+results_long <- melt(results, id.vars = "ntime",
+                     variable.name = "Method", value.name = "Concordance")
+levels(results_long$Method) <- c("CHF", "-log(Surv)")
+
+# Plot
+ggplot(results_long, aes(x = ntime, y = Concordance, color = Method)) +
+  geom_line(size = 1) +
+  ylim(0.7, 0.8) +
+  geom_point() +
+  labs(title = "Effect of ntime on C-index",
+       x = "ntime",
+       y = "Concordance Index",
+       color = "Risk Score") +
+  theme_minimal()
+
+```
+
+
+```{r}
+plot_df <- data.frame(
+  risk_chf = rowSums(p_rsf$chf),
+  risk_logsurv = rowSums(-log(p_rsf$survival))
+)
+
+library(ggplot2)
+ggplot(plot_df, aes(x = risk_chf, y = risk_logsurv)) +
+  geom_point(alpha = 0.7) +
+  labs(title = "",
+       x = "Sum of CHF",
+       y = "Sum of -log(Survival)") +
+  theme_minimal()
+```
+```{r}
+p_ranger <- predict(
+  ranger(Surv(time, status) ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8 + X9,
+         data = mb_train),
+  data = mb_test
+)
+
+# Risk scores from ranger predictions
+risk_chf_ranger <- rowSums(p_ranger$chf)
+risk_logsurv_ranger <- rowSums(-log(p_ranger$surv))
+
+# Combine into dataframe
+plot_df_ranger <- data.frame(
+  CHF = risk_chf_ranger,
+  NegLogSurv = risk_logsurv_ranger
+)
+
+# Scatter plot
+library(ggplot2)
+ggplot(plot_df_ranger, aes(x = CHF, y = NegLogSurv)) +
+  geom_point(alpha = 0.7) +
+  labs(title = "Ranger",
+       x = "Sum of CHF",
+       y = "Sum of -log(Survival)") +
+  theme_minimal()
+
+
+```
 
