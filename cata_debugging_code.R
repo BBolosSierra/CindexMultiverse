@@ -5,6 +5,86 @@ library(ggplot2)
 library(cowplot)
 library(GGally)
 
+## Debugging 3.0 - bootstrap values
+
+folds_stacked_predictions <- 
+  readRDS("./Results/5FoldStackedPredictions2.rds")
+
+hold_results <- 
+  readRDS("./Results/holdout_CindexResults2.rds")
+
+hold_results[[1]]$results_expm1_point_estim
+
+make_plot_entries <- function(results_list, point_estimate, input) {
+  expm_entries <- lapply(names(results_list), function(name) {
+    if (name == "batch.metrics") return(NULL)
+    
+    result <- results_list[[name]]
+    if(input == "Exp.Mort") {
+      model <- sub("ExpMort\\.", "", name)
+    } else if(input == "RMST") {
+      model <- sub("RMST\\.", "", name)
+    } else if (input == "Distrib.") {
+      model <- name
+    }
+    metrics <- names(result$mean)
+    
+    entries <- lapply(seq_along(metrics), function(i) {
+      metric_name <- metrics[i]
+      mean_boost <- result$mean[i] # mean of bootstrap
+      mean_c <- point_estimate[[name]][[metric_name]]
+      ci <- result$confidence.intervals[i, ]
+      
+      data.frame(
+        Metric = metric_name,
+        Model = model,
+        cindex = mean_c,
+        cindex_boost = mean_boost,
+        lower = ci[1],
+        upper = ci[2],
+        InputType = input,
+        stringsAsFactors = FALSE
+      )
+    })
+    
+    do.call(rbind, entries)
+  })
+  
+  do.call(rbind, expm_entries)
+}
+
+fold_n <- 1
+
+results_expm1 = hold_results[[fold_n]]$results_expm1
+results_expm2 = hold_results[[fold_n]]$results_expm2
+results_expm3 = hold_results[[fold_n]]$results_expm3
+results_risk1 = hold_results[[fold_n]]$results_risk1
+results_risk2 = hold_results[[fold_n]]$results_risk2
+results_risk3 = hold_results[[fold_n]]$results_risk3
+results_surv = hold_results[[fold_n]]$results_surv
+
+results_expm1_point_estim = hold_results[[fold_n]]$results_expm1_point_estim
+results_expm2_point_estim = hold_results[[fold_n]]$results_expm2_point_estim
+results_expm3_point_estim = hold_results[[fold_n]]$results_expm3_point_estim
+results_risk1_point_estim = hold_results[[fold_n]]$results_risk1_point_estim
+results_risk2_point_estim = hold_results[[fold_n]]$results_risk2_point_estim
+results_risk3_point_estim = hold_results[[fold_n]]$results_risk3_point_estim
+results_surv_point_estim = hold_results[[fold_n]]$results_surv_point_estim
+
+expm_df_plot1 <- make_plot_entries(results_expm1, results_expm1_point_estim, input = "Exp.Mort")
+expm_df_plot2 <- make_plot_entries(results_expm2,  results_expm2_point_estim, input = "Exp.Mort")
+expm_df_plot3 <- make_plot_entries(results_expm3,  results_expm3_point_estim, input = "Exp.Mort")
+risk_df_plot1 <- make_plot_entries(results_risk1,  results_risk1_point_estim, input = "RMST")
+risk_df_plot2 <- make_plot_entries(results_risk2,  results_risk2_point_estim, input = "RMST")
+risk_df_plot3 <- make_plot_entries(results_risk3,  results_risk3_point_estim, input = "RMST")
+surv_df_plot  <- make_plot_entries(results_surv,  results_surv_point_estim, input = "Distrib.")
+
+risk_df_plot1 %>%
+  ggplot(aes(x = cindex, y = cindex_boost, color = Model)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") 
+  #geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.001) 
+
 ## Debugging 2.0 - comparison between expected mortality and sum(S(t))
 
 folds_stacked_predictions <- 
