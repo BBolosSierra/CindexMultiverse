@@ -2,60 +2,56 @@ set.seed(123)
 
 # Lifelines wrapper for R
 lifelinesR <- function(time, predicted, censoring){
-  # Function to convert python into R wrapping lifelines
-  np   <- import("numpy", convert = TRUE)
+  # Load python libraries
+  np <- import("numpy", convert = TRUE)
   concordance_index <- import("lifelines.utils", convert = TRUE)$concordance_index
-  
-  concordance_index(event_times = time,
+  # Calculate C-index
+  concordance_index(event_times      = time,
                     predicted_scores = 1 - predicted,
-                    event_observed =  censoring)
+                    event_observed   =  censoring)
 
 }
 
 
-### Reticulate to use pycox code:
+# Pycox wrapper for R (Antolini)
 pycoxR_SurvMatrix_Ant <- function(time, surv_matrix, censoring){
-  ### As difference from the previous one, this function calculates
-  ### c-index across all times 
-
-  np <- import("numpy", convert = FALSE)  
-  pd <- import("pandas", convert = FALSE)
+  # Load python libraries
+  np       <- import("numpy", convert = FALSE)  
+  pd       <- import("pandas", convert = FALSE)
   EvalSurv <- import("pycox.evaluation", convert = FALSE)$EvalSurv
-  pc_eval <- import("pycox.evaluation.concordance")
+  # Library to calculate separately all pairs
+  pc_eval  <- import("pycox.evaluation.concordance")
   
-  # Convert R to python with correct float or int
+  # Convert R objects to python with correct type
   time_py <- np$array(as.numeric(time), dtype = "float64")  
-  #time_py <- np$round(time_py, as.integer(2))
-  #time_py <- np$array(as.numeric(time_py), dtype = "float64")  
   censoring_py <- np$array(as.integer(censoring), dtype = "int32")
-  # Transpose the survival matrix
+  # Transpose the survival matrix and convert to python and correct type
   surv_mat <- t(as.matrix(surv_matrix))  # now: rows = times, cols = patients
-  
-  # Convert to numpy
   surv_np <- np$array(surv_mat, dtype = "float64")
-
-  # Time index 
-  time_index <- np$array(as.numeric(colnames(surv_matrix)), dtype = "float64")
+  time_index <- np$array(as.numeric(colnames(surv_matrix)), dtype = "float64") # time grid
   
   # Create pandas dataframe
   surv_df <- pd$DataFrame(data = surv_np, index = time_index)
+  
   # Very important and quite problematic!! 
   # censor_surv = "km" does not adjust for censoring. 
-  # it is made for other performace metrics, but does NOT apply to 
-  # concordance index in pycox
+  # censor_surv is made for other performance metrics, but does NOT apply to c-index
   # Leaving it as NULL, as it makes no difference than default or "km"
-  # Tested in TestingAntolinis.py
+  # Build the evaluation object
   ev <- EvalSurv(surv_df, time_py, censoring_py, censor_surv = NULL)
+  
+  # Calculate C-index and convert back to R objects
   cindex <- py_to_r(ev$concordance_td(method = "antolini"))
   
+  # Calculate the concordant and comparable pairs separately to analyse differences
   surv_idx <- np$searchsorted(time_index, time_py)
-  
-  num_concordant <- pc_eval$`_sum_concordant_disc`(surv_np, time_py, censoring_py, surv_idx, pc_eval$`_is_concordant_antolini`)
-  num_comparable <- pc_eval$`_sum_comparable`(time_py, censoring_py, pc_eval$`_is_comparable_antolini`)
-  
+  num_concordant <- pc_eval$`_sum_concordant_disc`(surv_np, time_py, censoring_py, 
+                                                   surv_idx, pc_eval$`_is_concordant_antolini`)
+  num_comparable <- pc_eval$`_sum_comparable`(time_py, censoring_py, 
+                                              pc_eval$`_is_comparable_antolini`)
+  # Convert them back to R objects
   num_concordant <- py_to_r(num_concordant)
   num_comparable <- py_to_r(num_comparable)
-  
   
   return(list(
     cindex = cindex,
@@ -64,46 +60,48 @@ pycoxR_SurvMatrix_Ant <- function(time, surv_matrix, censoring){
   ))
 }
 
-
+# Pycox wrapper for R (Antolini modified version)
 pycoxR_SurvMatrix_AdjAnt <- function(time, surv_matrix, censoring){
-  ### As difference from the previous one, this function calculates
-  ### c-index across all times 
+  # Load python libraries
   np <- import("numpy", convert = FALSE)  
   pd <- import("pandas", convert = FALSE)
   EvalSurv <- import("pycox.evaluation", convert = FALSE)$EvalSurv
+  # Library to calculate separately all pairs
   pc_eval <- import("pycox.evaluation.concordance")
   
-  # Convert R to python with correct float or int
+  # Convert R objects to python with correct type
   time_py <- np$array(as.numeric(time), dtype = "float64")  
   censoring_py <- np$array(as.integer(censoring), dtype = "int32")
-  # Transpose the survival matrix
+  # Transpose the survival matrix and convert to python and correct type
   surv_mat <- t(as.matrix(surv_matrix))  # now: rows = times, cols = patients
-  
-  # Convert to numpy
   surv_np <- np$array(surv_mat, dtype = "float64")
   
-  # Time index 
-  time_index <- np$array(as.numeric(colnames(surv_matrix)), dtype = "float64")
+  # Transpose the survival matrix and convert to python and correct type
+  time_index <- np$array(as.numeric(colnames(surv_matrix)), dtype = "float64") # time grid
+  
   # Create pandas dataframe
   surv_df <- pd$DataFrame(data = surv_np, index = time_index)
   
   # Very important and quite problematic!! 
   # censor_surv = "km" does not adjust for censoring. 
-  # it is made for other performace metrics, but does NOT apply to 
-  # concordance index in pycox
+  # censor_surv is made for other performance metrics, but does NOT apply to c-index
   # Leaving it as NULL, as it makes no difference than default or "km"
-  # Tested in TestingAntolinis.py
+  # Build the evaluation object
   ev <- EvalSurv(surv_df, time_py, censoring_py, censor_surv = NULL)
+  
+  # Calculate C-index and convert back to R objects
   cindex <- py_to_r(ev$concordance_td(method = "adj_antolini"))
   
+  # Calculate the concordant and comparable pairs separately to analyse differences
   surv_idx <- np$searchsorted(time_index, time_py)
+  num_concordant <- pc_eval$`_sum_concordant_disc`(surv_np, time_py, censoring_py, 
+                                                   surv_idx, pc_eval$`_is_concordant`)
+  num_comparable <- pc_eval$`_sum_comparable`(time_py, censoring_py, 
+                                              pc_eval$`_is_comparable`)
   
-  num_concordant <- pc_eval$`_sum_concordant_disc`(surv_np, time_py, censoring_py, surv_idx, pc_eval$`_is_concordant`)
-  num_comparable <- pc_eval$`_sum_comparable`(time_py, censoring_py, pc_eval$`_is_comparable`)
-  
+  # Convert them back to R objects
   num_concordant <- py_to_r(num_concordant)
   num_comparable <- py_to_r(num_comparable)
-  
   
   return(list(
     cindex = cindex,
@@ -114,45 +112,47 @@ pycoxR_SurvMatrix_AdjAnt <- function(time, surv_matrix, censoring){
 
 
 
-
+# Python wrapper for sksurv censored version
 sksurv.censoredR <- function(time, predicted, censoring) {
-  # like sksurvR::concordance_index_censored
-  np <- import("numpy", convert = FALSE)
+  # Load python libraries
+  np     <- import("numpy", convert = FALSE)
   sksurv <- import("sksurv.metrics", convert = FALSE)
-  
-  time_py <- np$array(as.numeric(time), dtype = "float64")  
+  # Convert R objects into R
+  time_py      <- np$array(as.numeric(time), dtype = "float64")  
   censoring_py <- np$array(as.logical(censoring), dtype = "bool")  
   predicted_py <- np$array(as.numeric(predicted), dtype = "float64")
   
+  # Calculate C-index
   c_index <- sksurv$concordance_index_censored(
     event_indicator = censoring_py,  
     event_time = time_py,
     estimate = predicted_py
   )
-  
+  # Return as R
   py_to_r(c_index)
   
 }
 
-  
+# Python wrapper for sksurv ipcw version with default settings
 sksurv.ipcwR <- function(time, predicted, censoring, 
                          eval.times, 
                          sksurv_train_time, 
                          sksurv_train_status, 
                          sksurv_tied_tol = 1e-8) { # Default
 
-  # Like Uno's
-  np <- import("numpy", convert = FALSE)
+  # Load libraries
+  np     <- import("numpy", convert = FALSE)
   sksurv <- import("sksurv.metrics", convert = FALSE)
-  
+  # Convert time to R
   time_train_py <- np$array(as.numeric(sksurv_train_time), dtype = "float64")
+  time_test_py  <- np$array(as.numeric(time), dtype = "float64")
+  # Convert status to R (event = 1, censored = 0)
   censoring_train_py <- np$array(as.logical(sksurv_train_status), dtype = "bool")
-  
-  time_test_py <- np$array(as.numeric(time), dtype = "float64")
-  censoring_test_py <- np$array(as.logical(censoring), dtype = "bool")  
-  
+  censoring_test_py  <- np$array(as.logical(censoring), dtype = "bool")  
+  # Convert predictions to R
   predicted_py <- np$array(as.numeric(predicted), dtype = "float64")
   
+  # Create survival objects
   survival_dtype <- np$dtype(list(
     tuple("event", np$bool_),
     tuple("time", np$float64)
@@ -169,7 +169,7 @@ sksurv.ipcwR <- function(time, predicted, censoring,
   
   # Compute IPCW-adjusted C-index
   c_index_ipcw <- sksurv$concordance_index_ipcw(
-    survival_train = train_survival_py, #test_survival_py,
+    survival_train = train_survival_py,
     survival_test = test_survival_py,
     estimate = predicted_py,
     tau = eval.times,
@@ -179,81 +179,51 @@ sksurv.ipcwR <- function(time, predicted, censoring,
   py_to_r(c_index_ipcw)
 }
 
-
+# ---- Bootstrapping C-index -----
+# The bootstrap is done based on a data subset (test set)
+# 100 bootstrap re-samples are generated from it
 bootstrap.metric <- function(metrics.wrapper, 
                              dataset, 
                              implementation, 
                              eval.times = NULL, 
                              sampled_data = NULL,
-                             resample_indices = NULL, 
-                             additional = NULL, 
-                             seed = NULL) { 
-  
-  if (is.null(sampled_data)) {
-    
-    # Helper function to sample dataset based on indices
-    sample_dataset <- function(dataset, sample_idx) {
-      sampled_dataset <- lapply(dataset, function(value) value[sample_idx])
-      return(sampled_dataset)
-    }
-    
-    N <- 1:length(resample_indices)
-    # If resample indices are not provided, generate them
-    if (is.null(resample_indices)) {
-      set.seed(seed)
-      size <- length(dataset[[1]])  # Assuming all elements in the dataset are of the same length
-      resample_indices <- replicate(N, sample(seq_len(size), size = size, replace = TRUE), simplify = FALSE)
-    }
-    # Calculate the number of bootstraps
-    N_bootstraps <- length(resample_indices)
-    # Initialize iterations
-    iterations <- vector("list", length(resample_indices))  # Match the number of resample indices
-    
-    for (i in seq_along(resample_indices)) {
-      # Use provided or internally generated resample indices
-      resample_idx <- resample_indices[[i]]
-      
-      # Sample the dataset and calculate the metric
-      sampled_data <- sample_dataset(dataset, resample_idx)
-  
-      # For the sampled data what happens if we sort
+                             additional = NULL) { 
+  # Empty lists length of number of boostraps
+  iterations <- vector("list", length(sampled_data))
+  # Number of boostraps
+  N_bootstraps <- length(sampled_data)
+  # Loop through the sampled_data
+  for (i in seq_along(sampled_data)) {
+    # Subset each sampled data from list
+    resampled_data <- sampled_data[[i]]
+    # If the implementation is Ctd (antolinis) the input is the survival matrix
+    if (("pycox.Ant" %in% implementation) | ("pycox.Adj.Ant" %in% implementation)) {
+      # Get status and time
+      data <- data.frame(
+        censoring = resampled_data[[dataset$censoring]],
+        time = resampled_data[[dataset$time]]
+      )
+      # Subset the correct model matrix
+      surv_matrix = resampled_data[, grep(paste0("^", dataset$predicted, "\\."), 
+                                          names(resampled_data), value = TRUE), drop = FALSE]
+      # Subtract only the time points as column names
+      colnames(surv_matrix) <- as.numeric(sub(".*\\.", "", colnames(surv_matrix)))
+      # Run the metrics wrapper to calculate C-index
+      iterations[[i]] <- do.call(metrics.wrapper, c(data, list(surv_matrix = surv_matrix), 
+                                                    list(implementation = implementation), 
+                                                    eval.times, additional = NULL)) 
+    # Other C and C tau implementations
+    } else {
+      # Create data with status, time and predictions (RMST or EM)
+      data <- data.frame(
+        predicted = resampled_data[[dataset$predicted]],
+        censoring = resampled_data[[dataset$censoring]],
+        time = resampled_data[[dataset$time]]
+      )
+      # Run the metrics wrapper to calculate C-index
       iterations[[i]] <- do.call(metrics.wrapper, 
-                                 c(sampled_data, list(implementation = implementation), 
-                                   eval.times, additional)) # sksurv.ipcw
-  
-    }
-  # if the data has already been sampled from indexes:  
-  } else {
-    iterations <- vector("list", length(sampled_data))
-    # Calculate the number of bootstraps
-    N_bootstraps <- length(sampled_data)
-    # Loop through the sampled_datar
-    for (i in seq_along(sampled_data)) {
-      # Subset each sampled data from list
-      resampled_data <- sampled_data[[i]]
-      
-      if (("pycox.Ant" %in% implementation) | ("pycox.Adj.Ant" %in% implementation)) {
-        data <- data.frame(
-          censoring = resampled_data[[dataset$censoring]],
-          time = resampled_data[[dataset$time]]
-        )
-        surv_matrix = resampled_data[, grep(dataset$predicted, names(resampled_data), value = TRUE), drop = FALSE]
-        # Run the implementations
-
-        colnames(surv_matrix) <- as.numeric(sub(".*\\.", "", colnames(surv_matrix)))
-        iterations[[i]] <- do.call(metrics.wrapper, c(data, list(surv_matrix = surv_matrix), list(implementation = implementation), eval.times, additional)) # sksurv.ipcw
-        
-      } else {
-        # Create dataset for calculation with minimal columns
-        data <- data.frame(
-          predicted = resampled_data[[dataset$predicted]],
-          censoring = resampled_data[[dataset$censoring]],
-          time = resampled_data[[dataset$time]]
-        )
-        iterations[[i]] <- do.call(metrics.wrapper, 
-                                   c(data, list(implementation = implementation), 
-                                     eval.times, additional)) # sksurv.ipcw
-      }
+                                 c(data, list(implementation = implementation), 
+                                   eval.times, additional)) 
     }
   }
   # Aggregate metrics
@@ -281,103 +251,60 @@ bootstrap.metric <- function(metrics.wrapper,
   ))
 }
 
-# With parallelisation
+# ---- Bootstrapping C-index in Parallel-----
+# The bootstrap is done based on a data subset (test set)
+# 100 bootstrap re-samples are generated from it
+# Parallel computation
 bootstrap.metric.parallel <- function(metrics.wrapper, 
                              dataset, 
                              implementation, 
                              eval.times = NULL,
                              sampled_data = NULL, 
-                             resample_indices = NULL, 
-                             additional = NULL, 
-                             seed_resample = NULL) {
-  
-  # If the data has been already sampled from the bootstrap index,
-  # use the sampled data, otherwise, based on the resample index 
-  # resample the dataset
-  if (is.null(sampled_data)) {
-   
-    # Helper function to sample dataset based on indices
-    sample_dataset <- function(dataset, sample_idx) {
-      sampled_dataset <- lapply(dataset, function(value) value[sample_idx])
-      return(sampled_dataset)
-    }
-    
-    N <- 1:length(resample_indices)
-    
-    # If sample indices are not provided, generate them
-    if (is.null(resample_indices)) {
-      # generate resample indeces with a seed
-      set.seed(seed_resample)
-      size <- length(dataset[[1]])  # Assuming all elements in the dataset are of the same length
-      resample_indices <- replicate(N, sample(seq_len(size), 
-                                              size = size, replace = TRUE), 
-                                    simplify = FALSE)
-    }
-
-    N_bootstraps <- length(resample_indices)
-    # Initialize iterations
-    resampled_data <- vector("list", length = N_bootstraps) 
-    for (i in seq_along(resample_indices)) {
-      # Use provided or internally generated resample indices
-      resample_idx <- resample_indices[[i]]
-  
-      # Sample the dataset and calculate the metric
-      resampled_data[[i]] <- sample_dataset(dataset, resample_idx)
-    
-    }
-  } else {
-    iterations <- vector("list", length(sampled_data))
-    # Calculate the number of bootstraps
-    N_bootstraps <- length(sampled_data)
-    # Loop through the sampled_datar
-    resampled_data <- vector("list", length = N_bootstraps)
-    surv_matrixes <- vector("list", length = N_bootstraps)
-    for (i in seq_along(sampled_data)) {
-      # Subset each sampled data from list
-      sampled_data_ <- sampled_data[[i]]
-      
-      if (("pycox.Ant" %in% implementation) | ("pycox.Adj.Ant" %in% implementation)) {
-        resampled_data[[i]] <- data.frame(
-          censoring = sampled_data_[[dataset$censoring]],
-          time = sampled_data_[[dataset$time]]
-        )
-        # Just take the survival matrix for the selected 
-        surv_mat = sampled_data_[, grep(dataset$predicted, names(sampled_data_), value = TRUE), drop = FALSE]
-        # Run the implementations
-
-        # iterations[[i]] <- do.call(metrics.wrapper, c(data, list(surv_matrix = surv_matrix), list(implementation = implementation), eval.times, additional)) # sksurv.ipcw
-        colnames(surv_mat) <- as.numeric(sub(".*\\.", "", colnames(surv_mat)))
-        surv_matrixes[[i]] <- surv_mat
-      } else {
-        # Create dataset for calculation with minimal columns
-        resampled_data[[i]] <- data.frame(
-          predicted = sampled_data_[[dataset$predicted]],
-          censoring = sampled_data_[[dataset$censoring]],
-          time = sampled_data_[[dataset$time]]
-        )
-      }
+                             additional = NULL) {
+  # Empty lists length of number of boostraps
+  iterations <- vector("list", length(sampled_data))
+  # Calculate the number of bootstraps
+  N_bootstraps <- length(sampled_data)
+  # Create empty lists
+  resampled_data <- vector("list", length = N_bootstraps)
+  surv_matrixes <- vector("list", length = N_bootstraps)
+  # Loop through the sampled_data
+  for (i in seq_along(sampled_data)) {
+    # Subset each sampled data from list
+    sampled_data_ <- sampled_data[[i]]
+    # If the implementation is Ctd (antolinis) the input is the survival matrix
+    if (("pycox.Ant" %in% implementation) | ("pycox.Adj.Ant" %in% implementation)) {
+      resampled_data[[i]] <- data.frame(
+        censoring = sampled_data_[[dataset$censoring]],
+        time = sampled_data_[[dataset$time]]
+      )
+      # Just take the survival matrix of the model
+      surv_mat = sampled_data_[, grep(dataset$predicted, names(sampled_data_), value = TRUE), drop = FALSE]
+      # Columns are reduce to time grid
+      colnames(surv_mat) <- as.numeric(sub(".*\\.", "", colnames(surv_mat)))
+      # Save matrixes
+      surv_matrixes[[i]] <- surv_mat
+    # Other C and C tau implementations
+    } else {
+      # Create data with status, time and predictions (RMST or EM)
+      resampled_data[[i]] <- data.frame(
+        predicted = sampled_data_[[dataset$predicted]],
+        censoring = sampled_data_[[dataset$censoring]],
+        time = sampled_data_[[dataset$time]]
+      )
     }
   }
-  #parallel_func <- function(resampled_data, implementation, eval.times, surv_matrixes) { 
+  # Parallel function
   parallel_func <- function(resampled_data, implementation, eval.times, surv_matrixes, additional) { 
-    
-    ## build progress bar
+    # build progress bar
     pro_bar <- progressor(along = resampled_data)
-  
-    #Run foreach
+    # Run foreach
     results <- suppressWarnings(foreach(i = seq_along(resampled_data),
                        data = resampled_data,
                        .combine = rbind,  ## Ensures all results are collected
                        .options.future = list(seed = TRUE)) %dofuture% {
-
-                         #py_config()
-                         ## Update progress bar
+                         # Update progress bar
                          pro_bar(sprintf("Iteration %d of %d", i, length(resampled_data)))
-
-                         #print(sapply(ls(), function(x) format(object.size(get(x)), units="auto")))
-                         #print(py_config())
-                         #surv_matrix <- surv_matrixes[[i]]
-                         
                          ## Call function with proper arguments
                          do.call(metrics.wrapper, c(data, list(surv_matrix = surv_matrixes[[i]]),
                                                     list(implementation = implementation),
@@ -386,24 +313,22 @@ bootstrap.metric.parallel <- function(metrics.wrapper,
     
   }
   
-  ## Set the parallel backend to future package
-  ## tell foreach to use futures
+  # Set the parallel backend to future package
   registerDoFuture() 
-  ## Plan doesn't work with reticulate as multi-session is 
-
+  
   plan(multisession) # Linux/Mac/Windows
   #plan(multicore) # Linux/Mac
   #plan(sequential)
 
-  ## Set progress bar style
+  # Set progress bar style
   handlers("cli")
-
+  # Run the parallel function
   metrics_df <- with_progress(parallel_func(resampled_data,
                                             implementation, 
                                             eval.times, 
                                             surv_matrixes, additional))
 
-  # Need to remove index from paralelization
+  # Remove parallel index 
   rownames(metrics_df) <- NULL
 
   # Calculate mean and 95% confidence intervals for each metric
@@ -425,7 +350,8 @@ bootstrap.metric.parallel <- function(metrics.wrapper,
   ))
 }
 
-# Metrics wrapper:
+# ---- C-index implementations-----
+# All the implementations in python and R
 metrics.wrapper <- function(predicted, surv_matrix = NULL, 
                             censoring, time, 
                             implementation, eval.times, 
@@ -435,17 +361,17 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
 
   # Initialize an empty array for the results
   results <- list()
-
   # Initialize eval.times list
   batch.eval.times <- c()
-  
   # Flatten the implementation list into a single vector
   implementation <- unlist(implementation)
   
   # If eval.times is missing, set to the maximum uncensoring time as in pec
+  # The maximum uncensored time is when the C-index stops updating
   if (missing(eval.times) || is.null(eval.times) || (eval.times == "resample_max_uncensored_time")) {
-    eval.times <- max(time[censoring == 1], na.rm=TRUE) # ?
+    eval.times <- max(time[censoring == 1], na.rm=TRUE) 
   }
+  # Store the eval.times for the results
   results$batch.eval.times <- c(results$batch.eval.times, eval.times)
   
   # For pec::cindex
@@ -529,7 +455,6 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
   # using the eval.times only to subset the survival probabilities at a time point
   if ("pycox.Ant" %in% implementation) {
     # Handle Python implementations
-
     #results[["pycox"]] <- pycoxR(time, predicted, censoring, eval.times)
     pycox_ant <- pycoxR_SurvMatrix_Ant(time=time, 
                                        surv_matrix=surv_matrix, 
@@ -550,7 +475,9 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
     results[["pycox.Adj.Ant.EP"]] <- pycox_adj$comparable
     results[["pycox.Adj.Ant.CP"]] <- pycox_adj$concordant
   }
-  #https://github.com/square/pysurvival/blob/master/pysurvival/cpp_extensions/metrics.cpp
+  
+  # For pysurvival we have extracted the function of interest in file pysurvivalR.tar.gz
+  # https://github.com/square/pysurvival/blob/master/pysurvival/cpp_extensions/metrics.cpp
   if ("pysurvival" %in% implementation){
     # R wrapped version of python/c++ library pysurvival
 
@@ -565,6 +492,7 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
     
   }
   
+  # For sksurv without ipcw
   if ("sksurv.censored" %in% implementation) { # Like Harrels
     sksurv <- sksurv.censoredR(time,
                                predicted, 
@@ -577,6 +505,7 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
     results[["sksurv.censored.TT"]] <- sksurv[[5]] # tied time
   }
   
+  # For sksurv with ipcw
   if ("sksurv.ipcw" %in% implementation) { # Like Uno's
     sksurv <- sksurv.ipcwR(time,
                            predicted,
@@ -593,6 +522,7 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
     results[["sksurv.ipcw.TT"]] <- sksurv[[5]] # tied time
   }
   
+  # For survival with IPCW
   if ("survival.n/G2" %in% implementation) {
     
     predicted = 1- predicted 
@@ -607,6 +537,7 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
     
   }
   
+  # For survival without IPCW
   if ("survival.n" %in% implementation) {
     
     predicted = predicted # expects survival? confusing....
@@ -632,193 +563,8 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
 }
 
 
-
-plot.cindex.distribution <- function(implementation, 
-                                     bootstrap.object, 
-                                     title, 
-                                     y_limits = NULL) {
-  
-  # Extract metrics from bootstrap object
-  batch.metrics <- bootstrap.object$batch.metrics 
-  
-  # Convert batch metrics to long format for ggplot2
-  long_batch_metrics <- reshape2::melt(batch.metrics, 
-                                       variable.name = "Metric", 
-                                       value.name = "Value")
-  long_batch_metrics <- long_batch_metrics[long_batch_metrics$Metric %in% implementation, ]
-  
-  # Create the plot
-  ggplot() +
-    # Add boxplots for each metric
-    geom_violin(
-      data = long_batch_metrics,
-      aes(x = Metric, y = Value),
-      width = 0.4,
-      fill = "lightblue",
-      alpha = 0.6
-    ) +
-    # Add jittered points for batch metrics
-    geom_jitter(
-      data = long_batch_metrics,
-      aes(x = Metric, y = Value),
-      width = 0.2,
-      color = "darkgray",
-      alpha = 0.5,
-      size = 1
-    ) +
-    labs(
-      title = title,
-      x = "Metric",
-      y = "Value"
-    ) +
-    theme(
-      axis.text.x = element_text(angle = 45, hjust = 1)
-    ) +
-    if (!is.null(y_limits)) ylim(y_limits[1], y_limits[2]) else NULL
-  
-}
-
-plot.cindex.ci <- function(implementation, bootstrap.object, title, y_limits = NULL) {
-  
-  # Extract metrics from bootstrap object
-  means <- bootstrap.object$mean
-  confidence.intervals <- bootstrap.object$confidence.intervals
-  
-  # Convert the data into dataframe
-  metrics_data <- data.frame(
-    Metric = names(means),
-    Mean = as.numeric(means),
-    Lower = as.numeric(confidence.intervals[, 1]),
-    Upper = as.numeric(confidence.intervals[, 2])
-  )
-  
-  # Filter by implementation list
-  metrics_data <- metrics_data[metrics_data$Metric %in% implementation, ]
-  
-  # Create boxplots with confidence intervals
-  ggplot(metrics_data, aes(x = Metric, y = Mean)) +
-    geom_boxplot(width = 0.4, fill = "lightblue", alpha = 0.6) +  # Boxplot
-    geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2, color = "red") +  # Confidence intervals
-    geom_point(size = 3, color = "darkblue") +  # Mean points
-    geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray", size = 0.8) +
-    theme_minimal() +
-    labs(
-      title = title,
-      x = "Metric",
-      y = "Mean Value"
-    ) +
-    theme(
-      axis.text.x = element_text(angle = 45, hjust = 1)
-    ) + 
-    if (!is.null(y_limits)) ylim(y_limits[1], y_limits[2]) else NULL
-  
-}
-
-plot.cindex.ci.longitudinal <- function(implementation, bootstrap.object, title, y_limits = NULL, time.points = NULL) {
-  
-  metrics_data <- do.call(rbind, lapply(time.points, function(t) {
-    
-    # Access bootstrap results at this time point
-    bootstrap_t <- bootstrap.object[[as.character(t)]]
-    
-    # Create dataframe for ggplot
-    data.frame(
-      Time = t,  # Store time point
-      Metric = names(bootstrap_t$mean),  # Extract metric names
-      Mean = as.numeric(bootstrap_t$mean),  # Extract mean values
-      Lower = as.numeric(bootstrap_t$confidence.intervals[, 1]),  # Lower CI
-      Upper = as.numeric(bootstrap_t$confidence.intervals[, 2])   # Upper CI
-    )
-  }))
-  
-  
-  # Filter by implementation
-  metrics_data <- metrics_data[metrics_data$Metric %in% implementation, ]
-  # Plot
-  ggplot(metrics_data, aes(x = Time, y = Mean, color = Metric, group = Metric)) +
-    geom_line(size = 1) + 
-    geom_point(size = 3) +  
-    geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2) +  
-    geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray", size = 0.8) +  
-    theme_minimal() +
-    scale_x_continuous(breaks = time.points) +
-    labs(
-      title = title,
-      x = "Time Point",
-      y = "Mean C-Index",
-      color = "Implementation"
-    ) +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
-    if (!is.null(y_limits)) ylim(y_limits[1], y_limits[2]) else NULL
-}  
-  
-  
-
-plot.violin.metrics <- function(selected_values, 
-                                column_name, 
-                                bootstrap_object, 
-                                stacked_predictions, 
-                                y_limits, 
-                                title=NULL,
-                                implementation) {
-  
-  selected_values <- as.factor(selected_values)
-  
-  all_metrics_data <- data.frame()
-  
-  for (i in seq_along(selected_values)) {
-    value <- selected_values[[i]]
-    
-    # Subset bootstrap object and stacked predictions based on column_name
-    bootstrap_value <- bootstrap_object[[i]]
-    num_datasets <- 1:length(bootstrap_value)
-    cp_value <- stacked_predictions[stacked_predictions[[column_name]] == value, ]
-    
-    # Collect all data
-    metrics_data <- do.call(rbind, lapply(num_datasets, function(d) {
-      bootstrap_d <- bootstrap_value[[d]]
-      cp_version <- unique(cp_value[cp_value$version == d,]$cp)
-      
-      metric_std_dev <- sapply(implementation, function(m) {
-        sd(unlist(bootstrap_d$batch.metrics[, m]))
-      })
-      
-      data.frame(
-        Dataset = d,
-        Group = factor(value),  
-        Cp = cp_version,
-        Metric = names(bootstrap_d$mean),
-        Mean = as.numeric(bootstrap_d$mean),
-        StdDev = as.numeric(metric_std_dev)
-      )
-    }))
-    
-    # Append to full dataset
-    all_metrics_data <- rbind(all_metrics_data, metrics_data)
-  }
-  
-  p <- ggplot(all_metrics_data, aes(x = Metric, y = Mean, fill = Group)) +
-    geom_violin(trim = FALSE, alpha = 0.6, position = position_dodge(0.8)) +  
-    geom_jitter(aes(color = Group), alpha = 0.4, size = 1.8, position = position_dodge(0.8)) +  
-    stat_summary(fun = "mean", geom = "point", color = "black", size = 2, position = position_dodge(0.8)) +
-    stat_summary(fun.data = mean_sdl, geom = "errorbar", width = 0.2, color = "black", position = position_dodge(0.8)) + 
-    theme_minimal() +
-    labs(
-      title = title,
-      x = "Implementation",
-      y = "C-index Value",
-      fill = column_name 
-    ) +
-    theme(
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      legend.title = element_blank()
-    ) +
-    scale_color_discrete(guide = "none") +
-    ylim(y_limits[1], y_limits[2])
-  
-  print(p)
-}
-
+# Function to extract confidence intervals 
+# from lambda in Weibull PH models
 get_lambda_CI <- function(model, level = 0.95) {
   sumry <- summary(model)
   mu <- sumry$coefficients[1]
@@ -848,28 +594,33 @@ get_lambda_CI <- function(model, level = 0.95) {
   return(list(lambda = lambda, SE = se_lambda, CI = unname(ci)))
 }
 
+
+# ---- Generate synthetic data -----
+# Syntehtic event times follow Weibull PH
 generate_synthetic_event_times <- function(survreg_model, 
                                            n = 1000, 
                                            covariates, 
                                            seed = 123, 
                                            verbose = FALSE) {
+  # Set seed
   set.seed(seed)
-  
+  # Number of patients
   total_n <- nrow(covariates)
-  
+  # If the user given number of patients is less that the total
+  # Then shuffle and sample from the the covariates
   if (n < total_n) {
     covariates <- covariates[sample(1:total_n, n, replace = FALSE), ]
+  # Otherwise no shuffling or sampling needed
   } else {
-    n <- total_n  # If n == total_n, no shuffling needed
+    n <- total_n 
   }
-  # Maybe add replacement true for when >original size. Or Model covariates?
-  
-  ### Get parameters from the original model (this is AFT scale)
+
+  # Get parameters from the original model (this is AFT scale)
   mu <- survreg_model$coefficients[1]  # Intercept
   sigma <- survreg_model$scale  # Scale
   alpha <- survreg_model$coefficients[-1] # Regression coefficients
   
-  ### PARAMETER TRANSFORMATION
+  # PARAMETER TRANSFORMATION
   # Covert into WeibullPH:
   lambda <- exp(-mu/sigma)
   gamma <- 1/sigma
@@ -900,9 +651,14 @@ generate_synthetic_event_times <- function(survreg_model,
                "observed_time" = T_s, "status" = status_obs), covariates)
   
   # Set the attributes
-  attr(synth_data, "lambda") <- lambda
-  attr(synth_data, "gamma") <- gamma
-  attr(synth_data, "beta") <- beta
+  attr(synth_data, "lambda0") <- lambda
+  attr(synth_data, "gamma")   <- gamma
+  attr(synth_data, "beta")    <- beta
+  attr(synth_data, "betas_cov") <- betas_cov # linear predictor
+  attr(synth_data, "seed")    <- seed
+  attr(synth_data, "mu")      <- mu
+  attr(synth_data, "sigma")   <- sigma
+  attr(synth_data, "alpha")   <- alpha
   
   # Censoring percentage as attribute
   attr(synth_data, "censoring_percentage") <- censoring_percentage
@@ -910,7 +666,10 @@ generate_synthetic_event_times <- function(survreg_model,
   return(synth_data)
 }
 
-# Add censoring to the survival data
+# ---- Adding synthetic censoring -----
+# Censoring can be: administrative, 
+# weibull PH (informative or not), 
+# and uniform
 add_censoring <- function(my_surv_data,
                           cens.type = "administrative",
                           cens.params = list(
@@ -920,40 +679,35 @@ add_censoring <- function(my_surv_data,
                             cens_increase_unif = NULL,  # used only for uniform cens
                             weibull_cens_model = NULL, # used only for weibull cens
                             lambda_c_factor = NULL, # used only for weibull cens
-                            weibull_cens_model_low = NULL, # informative cens
-                            weibull_cens_model_high = NULL, # informative cens
                             covariates = NULL ## when informative
                           ),
                           seed = 123) {
-  
+  # Set seed
   set.seed(seed)
-  
   # Get sample size
   n <- nrow(my_surv_data)
   
-  # Generate censoring times
-  
-  ## Administrative censoring
+  # Administrative censoring
   if(cens.type == "administrative") {
     censoring_times <- rep(cens.param$cens_limit_admin, times = n)
   }
+  # Uniform censroing
   if(cens.type == "uniform") {
     # Lower bound of Uniform
     T_s <- my_surv_data$time
-    
+    # Lower bound is the minimum of event times
     C_min <- min(T_s)
+    # Upper bound can be modified
     C_max <- quantile(T_s, 1 - cens.params$cens_increase_unif)
-    
+    # Generate censoring times
     censoring_times  <- runif(n, min = C_min, max = C_max)
-    
+    # It can also have administrative
     if (!is.null(cens.params$cens_limit_admin)) {
       censoring_times <- pmin(censoring_times, 
                               cens.params$cens_limit_admin)
     }
-    # censoring_times <- runif(n, 
-    #                          min = cens.params$min_cens_unif, 
-    #                          max = cens.params$max_cens_unif)
   }
+  # Weibull censoring
   if(cens.type == "weibull") {
     # Get parameter values
     weibull_cens_model <- cens.params$weibull_cens_model
@@ -961,13 +715,13 @@ add_censoring <- function(my_surv_data,
     
     mu_c    <-  weibull_cens_model$coefficients[1]  # Intercept
     sigma_c <-  weibull_cens_model$scale  # Scale
-    alpha_c <-  weibull_cens_model$coefficients[-1] # Regression coefficients
+    #alpha_c <-  weibull_cens_model$coefficients[-1] # Regression coefficients
     
     # Transform to WeibullPH
     lambda_c <- exp(-mu_c/sigma_c) * lambda_c_factor
     gamma_c <- 1/sigma_c
-    beta_c <- -alpha_c/sigma_c
-    
+    #beta_c <- -alpha_c/sigma_c
+
     # Generate censoring times
     U_c <- runif(n)
     censoring_times <- (-log(U_c) / lambda_c)^(1/gamma_c)
@@ -979,6 +733,7 @@ add_censoring <- function(my_surv_data,
     }
     
   } 
+  # If Weibull informative
   if(cens.type == "informative") {
     # Get parameter values
     weibull_cens_model <- cens.params$weibull_cens_model
@@ -995,7 +750,7 @@ add_censoring <- function(my_surv_data,
     
     # Calculate the linear predictor
     betas_cov_c <- as.matrix(cens.params$covariates) %*% beta_c
-    
+
     # Generate censoring times
     U_c <- runif(n)
     censoring_times <- (-log(U_c) /(lambda_c * exp(betas_cov_c)))^(1/gamma_c)
@@ -1008,7 +763,6 @@ add_censoring <- function(my_surv_data,
     
   }
 
-  
   # Create a new data frame with observed times and status
   my_surv_data$censoring_time <- censoring_times
   my_surv_data$observed_time <- pmin(my_surv_data$time, my_surv_data$censoring_time)
@@ -1018,150 +772,7 @@ add_censoring <- function(my_surv_data,
   
 }
 
-generate_modified_weibull_times <- function(survreg_model, 
-                                            survreg_censoring_model,
-                                            n = 1000, 
-                                            covariates, 
-                                            seed=123, 
-                                            lambda_c_factor = 1,
-                                            admin_censoring_times = NULL,
-                                            verbose=FALSE) {
-  set.seed(seed)
-  
-  total_n <- nrow(covariates)
-  
-  if (n < total_n) {
-    covariates <- covariates[sample(1:total_n, n, replace = FALSE), ]
-  } else {
-    n <- total_n  # If n == total_n, no shuffling needed
-  }
-  # Maybe add replacement true for when >original size. Or Model covariates?
-  
-  ### EVENT
-  # Fit the uncensoring data
-  mu <- survreg_model$coefficients[1]  # Inntercept
-  sigma <- survreg_model$scale  # Scale
-  
-  # Get confidence intervals
-  conf_survreg <- confint(survreg_model) 
-  mu_CI <- conf_survreg[1, ] 
-  # Scale does not have confint:
-  se_logsigma <- summary(survreg_model)$table["Log(scale)", "Std. Error"]
-  # Estimate variance delta method
-  var_sigma <- (sigma^2) * (se_logsigma^2)
-  se_sigma <- sqrt(var_sigma)
-  
-  
-  ### CENSORING
-  # Fit censoring times
-  mu_c <- survreg_censoring_model$coefficients[1]  # Intercept
-  sigma_c <- survreg_censoring_model$scale  # Scale
-  
-  # Get confidence intervals
-  conf_survreg_c <- confint(survreg_censoring_model)  
-  mu_CI_c <- conf_survreg_c[1, ]  
-  # Scale does not have confint:
-  se_logsigma <- summary(survreg_censoring_model)$table["Log(scale)", "Std. Error"]
-  # Estimate variance delta method
-  var_sigma_c <- (sigma_c^2) * (se_logsigma^2)
-  se_sigma_c <- sqrt(var_sigma_c)
-  
-  
-  ### PARAMETER TRANSFORMATION
-  # Covert into WeibullPH:
-  lambda <- exp(-mu/sigma)
-  gamma <- 1/sigma
-  lambda_c <- exp(-mu_c/sigma_c) * lambda_c_factor
-  gamma_c <- 1/sigma_c  
-  
-  
-  # Confidence interval for gamma
-  z <- qnorm(0.975)
-  se_gamma <- (1 / sigma^2) * se_sigma
-  gamma_CI <- c(gamma - z * se_gamma, gamma + z * se_gamma)
-  
-  se_gamma_c <- (1 / sigma_c^2) * se_sigma_c
-  gamma_CI_c <- c(gamma_c - z * se_gamma_c, gamma_c + z * se_gamma_c)
-  
-  # Confidence interval for lambda
-  #lambda_CI <- exp(-mu_CI / sigma)
-  # Transform confidence intervals for WeibullPH
-  #lambda_CI_c <- exp(-mu_CI_c / sigma_c)
-  # Transform confidence intervals for WeibullPH
-  lambda_CI <- get_lambda_CI(survreg_model)
-  lambda_CI_c <- get_lambda_CI(survreg_censoring_model)
-  
-  n_coef <- dim(covariates)[2] + 1
-  # Calculate survival times
-  U <- runif(n)
-  beta <-  -survreg_model$coefficients[2:n_coef]/sigma
-  betas_cov <- as.matrix(covariates) %*% beta
-  
-  T_s <- (-log(U) / (lambda * exp(betas_cov)))^(1/gamma)
-  
-  # Calculate censoring times
-  U_c <- runif(n)
-  
-  T_c <- (-log(U_c) / (lambda_c))^(1/gamma_c)
-  
-  if (verbose) {
-    cat("Lambda C", lambda_c, "\n")
-    cat("Gamma C", gamma_c, "\n")
-    cat("Lambda T", lambda, "\n")
-    cat("Gamma T", gamma, "\n")
-    cat("Betas", beta, "\n")
-  }
-  
-  # Get conficence intervals for beta
-  conf_beta <- confint(survreg_model)[2:n_coef, ]
-  beta_CI <- -conf_beta / sigma  
-  beta_CI <- beta_CI[, c(2,1)]
-  
-  # Administrative censoring
-  if (!is.null(admin_censoring_times)) {
-    # for instance max(T) of the original dataset:
-    T_c <- pmin(T_c, admin_censoring_times)
-  } #?
-  
-  # Select minimum times
-  T_obs      <- pmin(T_s, T_c)
-  
-  # Generate status based on censoring
-  status_obs <- ifelse(T_s <= T_c, 1, 0) # <= or < ?
-  
-  # Calculate percentage of censoring
-  censoring_percentage <- mean(status_obs == 0) * 100
-  
-  synth_data <- cbind(data.frame("time" = T_s, 
-                                 "censoring_time" = T_c, 
-                                 "observed_time" = T_obs,
-                                 "status" = status_obs), covariates)
-  # Set the attributes
-  attr(synth_data, "lambda_T") <- lambda
-  attr(synth_data, "lambda_Tc") <- lambda_c
-  attr(synth_data, "gamma_T") <- gamma
-  attr(synth_data, "gamma_Tc") <- gamma_c
-  attr(synth_data, "beta") <- beta
-  
-  # Also the Ci
-  attr(synth_data, "lambda_T_CI") <- lambda_CI$CI
-  attr(synth_data, "lambda_Tc_CI") <- lambda_CI_c$CI
-  attr(synth_data, "gamma_T_CI") <- gamma_CI
-  attr(synth_data, "gamma_Tc_CI") <- gamma_CI_c
-  attr(synth_data, "beta_CI") <- beta_CI
-  
-  # Censoring percentage as attribute
-  attr(synth_data, "censoring_percentage") <- censoring_percentage
-  
-  return(synth_data)
-  
-}
-
-
-
-
-
-
+# Easy load of synthetic datasets
 load_synthetic_datasets <- function(file_path) {
   # Load the structured list
   loaded_list <- readRDS(file_path)
@@ -1179,13 +790,14 @@ load_synthetic_datasets <- function(file_path) {
   
   return(datasets)
 }
-  
+
+# ---- Extraction of model predictions -----
 get_model_preds2 <- function(stacked_predictions, 
                              model_names = "all", 
                              input_type = c("Distribution", "ExpectedMortality", "RiskAtT", "RMST"),
                              specific_time = NULL, 
                              bootstrap_patient_ids = NULL) {
-  
+  # Extract the input transformation
   input_type <- match.arg(input_type)
   base_cols <- c("test_time", "test_status", "patients_ids")
   df <- stacked_predictions  # work on a copy
@@ -1196,7 +808,7 @@ get_model_preds2 <- function(stacked_predictions,
     df <- df[match_ids, , drop = FALSE]
   }
   
-  # Detect model names if "all"
+  # Detect model names if "all" (but we might only want to do this for 1 model)
   if (identical(model_names, "all")) {
     all_cols <- names(df)
     if (input_type %in% c("Distribution", "RiskAtT")) {
@@ -1211,12 +823,15 @@ get_model_preds2 <- function(stacked_predictions,
   # Store final prediction columns
   all_model_cols <- list()
   
+  # Go through each model and input type
   for (model in model_names) {
+    # Survival probability distribution as input
     if (input_type == "Distribution") {
       pattern <- paste0("^", model, "\\.")
       cols <- grep(pattern, names(df), value = TRUE)
       all_model_cols[[length(all_model_cols) + 1]] <- df[, cols, drop = FALSE]
-      
+    
+    # Expected mortality
     } else if (input_type == "ExpectedMortality") {
       col_name <- paste0("ExpMort.", model)
       if (!col_name %in% names(df)) {
@@ -1224,39 +839,28 @@ get_model_preds2 <- function(stacked_predictions,
       }
       all_model_cols[[model]] <- df[, col_name, drop = FALSE]
       
+    # Risk (1 - S(t)) at specific time t
     } else if (input_type == "RiskAtT") {
       if (is.null(specific_time)) {
         stop("specific_time must be provided for input_type = 'RiskAtT'")
       }
-
       cols <- paste0(model, ".", specific_time)
-      
       missing_cols <- setdiff(cols, names(df))
       if (length(missing_cols) > 0) {
         stop("Missing columns: ", paste(missing_cols, collapse = ", "))
       }
-      
-      # Transform survival to risk
+      # Transform survival to risk (1-S(t))
       transformed <- lapply(cols, function(col) 1 - df[[col]])
       names(transformed) <- cols
       all_model_cols[[length(all_model_cols) + 1]] <- as.data.frame(transformed)
-    } else if (input_type == "PartialHazAtT") {
-      if (is.null(specific_time)) {
-        stop("specific_time must be provided for input_type = 'PartialHazAtT'")
-      }
-      cols <- paste0(model, ".", specific_time)
-      missing_cols <- setdiff(cols, names(df))
-      if (length(missing_cols) > 0) {
-        stop("Missing columns: ", paste(missing_cols, collapse = ", "))
-      }
-      
+    
+    # RMST
     } else if (input_type == "RMST") {
       col_name <- paste0("RMST.", model)
       if (!col_name %in% names(df)) {
         stop("Missing column: ", col_name)
       }
       all_model_cols[[model]] <- df[, col_name, drop = FALSE]
-      
     }
   }
   # Combine everything to return
@@ -1266,6 +870,8 @@ get_model_preds2 <- function(stacked_predictions,
   return(final_df)
 }
 
+# ---- Extract info from bootstrap and point estimates -----
+# When calculated with risk at t 
 make_risk_plot_entries <- function(results_list, point_estimate) {
   # Extract each result and convert to data.frame rows
   risk_entries <- lapply(names(results_list), function(name) {
@@ -1301,47 +907,8 @@ make_risk_plot_entries <- function(results_list, point_estimate) {
   do.call(rbind, risk_entries)
 }
 
-make_risk_table <- function(results_list) {
-  risk_entries <- lapply(names(results_list), function(name) {
-    if (name == "batch.metrics") return(NULL)
-    
-    result <- results_list[[name]]
-    model <- sub("\\..*", "", name)
-    t <- sub(".*\\.", "", name)
-    tau <- result$eval.times
-    metrics <- names(result$mean)
-    
-    entries <- lapply(seq_along(metrics), function(i) {
-      metric_name <- metrics[i]
-      mean_c <- result$mean[i]
-      ci <- result$confidence.intervals[i, ]
-      value <- sprintf("%.3f [%.3f–%.3f]", mean_c, ci[1], ci[2])
-      
-      data.frame(
-        Metric = metric_name,
-        Model = model,
-        InputType = paste0("Risk(t=", t, ", tau=", tau, ")"),
-        Value = value,
-        stringsAsFactors = FALSE
-      )
-    })
-    
-    do.call(rbind, entries)
-  })
-  
-  risk_df <- do.call(rbind, risk_entries)
-  
-  # Reshape for table display
-  df_wide <- tidyr::pivot_wider(
-    risk_df,
-    names_from = Model,
-    values_from = Value
-  )
-  
-  return(df_wide)
-}
-
-
+# ---- Extract info from bootstrap and point estimates -----
+# When calculated with Expected mortality
 make_expm_plot_entries <- function(results_list, point_estimate) {
   expm_entries <- lapply(names(results_list), function(name) {
     if (name == "batch.metrics") return(NULL)
@@ -1372,7 +939,8 @@ make_expm_plot_entries <- function(results_list, point_estimate) {
   
   do.call(rbind, expm_entries)
 }
-
+# ---- Extract info from bootstrap and point estimates -----
+# When calculated with survival probabilities
 make_surv_plot_entries <- function(results_list, point_estimate) {
   surv_entries <- lapply(names(results_list), function(name) {
     if (name == "batch.metrics") return(NULL)
@@ -1403,6 +971,8 @@ make_surv_plot_entries <- function(results_list, point_estimate) {
   do.call(rbind, surv_entries)
 }
 
+# ---- Extract info from bootstrap and point estimates -----
+# When calculated with RMST
 make_rmst_plot_entries <- function(results_list, point_estimate) {
   expm_entries <- lapply(names(results_list), function(name) {
     if (name == "batch.metrics") return(NULL)
@@ -1433,147 +1003,18 @@ make_rmst_plot_entries <- function(results_list, point_estimate) {
   
   do.call(rbind, expm_entries)
 }
-make_expm_plot_entries <- function(results_list, point_estimate) {
-  expm_entries <- lapply(names(results_list), function(name) {
-    if (name == "batch.metrics") return(NULL)
-    
-    result <- results_list[[name]]
-    model <- sub("ExpMort\\.", "", name)
-    metrics <- names(result$mean)
-    
-    entries <- lapply(seq_along(metrics), function(i) {
-      metric_name <- metrics[i]
-      #mean_c <- result$mean[i] # mean of bootstrap
-      mean_c <- point_estimate[[name]][[metric_name]]
-      ci <- result$confidence.intervals[i, ]
 
-      data.frame(
-        Metric = metric_name,
-        Model = model,
-        cindex = mean_c,
-        lower = ci[1],
-        upper = ci[2],
-        InputType = "Exp.Mort",
-        stringsAsFactors = FALSE
-      )
-    })
-    
-    do.call(rbind, entries)
-  })
-  
-  do.call(rbind, expm_entries)
-}
-
-make_surv_plot_entries <- function(results_list, point_estimate) {
-  surv_entries <- lapply(names(results_list), function(name) {
-    if (name == "batch.metrics") return(NULL)
-    
-    result <- results_list[[name]]
-    metrics <- names(result$mean)
-    
-    entries <- lapply(seq_along(metrics), function(i) {
-      metric_name <- metrics[i]
-      #mean_c <- result$mean[i] # mean of bootstrap
-      mean_c <- point_estimate[[name]][[metric_name]]
-      ci <- result$confidence.intervals[i, ]
-      
-      data.frame(
-        Metric = metric_name,
-        Model = name,
-        cindex = mean_c,
-        lower = ci[1],
-        upper = ci[2],
-        InputType = "Distrib.",
-        stringsAsFactors = FALSE
-      )
-    })
-    
-    do.call(rbind, entries)
-  })
-  
-  do.call(rbind, surv_entries)
-}
-
-make_expm_table <- function(results_list, point_estimate) {
-  expm_entries <- lapply(names(results_list), function(name) {
-    if (name == "batch.metrics") return(NULL)
-    
-    result <- results_list[[name]]
-    model <- sub("ExpMort\\.", "", name)
-    metrics <- names(result$mean)
-    
-    entries <- lapply(seq_along(metrics), function(i) {
-      metric_name <- metrics[i]
-      #mean_c <- result$mean[i]
-      mean_c <- point_estimate[[name]][[metric_name]]
-      ci <- result$confidence.intervals[i, ]
-      value <- sprintf("%.3f [%.3f–%.3f]", mean_c, ci[1], ci[2])
-      
-      data.frame(
-        Metric = metric_name,
-        Model = model,
-        Value = value,
-        InputType = "Exp.Mort",
-        stringsAsFactors = FALSE
-      )
-    })
-    
-    do.call(rbind, entries)
-  })
-  
-  expm_df <- do.call(rbind, expm_entries)
-  
-  # Reshape for table display
-  df_wide <- tidyr::pivot_wider(
-    expm_df,
-    names_from = Model,
-    values_from = Value
-  )
-  
-  return(df_wide)
-}
-
-make_surv_table <- function(results_list, point_estimate) {
-  surv_entries <- lapply(names(results_list), function(name) {
-    if (name == "batch.metrics") return(NULL)
-    
-    result <- results_list[[name]]
-    model <- name
-    metrics <- names(result$mean)
-    
-    entries <- lapply(1:2, function(i) {
-      #mean_c <- result$mean[i]
-      mean_c <- point_estimate[[name]][[metrics[[i]]]]
-      ci <- result$confidence.intervals[i, ]
-      value <- sprintf("%.3f [%.3f–%.3f]", mean_c, ci[1], ci[2])
-      
-      data.frame(
-        Metric = metrics[i],
-        InputType = "Distrib.",
-        Model = model,
-        Value = value,
-        stringsAsFactors = FALSE
-      )
-    })
-    
-    do.call(rbind, entries)
-  })
-  
-  surv_df <- do.call(rbind, surv_entries)
-  
-  df_wide <- tidyr::pivot_wider(
-    surv_df,
-    names_from = Model,
-    values_from = Value
-  )
-  
-  return(df_wide)
-}
-
-plot_survival_curves <- function(surv_matrix, patient_ids = NULL, seed = 42, n_patients = 5,
+# ---- Survival curves plotting -----
+plot_survival_curves <- function(surv_matrix, 
+                                 patient_ids = NULL, 
+                                 seed = 42, 
+                                 n_patients = 5,
                                  title = "Survival Curves") {
   if (is.null(patient_ids)) {
     set.seed(seed)
+    if (nrow(surv_matrix) <= n_patients){
+      n_patients = nrow(surv_matrix)
+    }
     patient_ids <- sample(1:nrow(surv_matrix), n_patients)
   }
   
@@ -1584,7 +1025,7 @@ plot_survival_curves <- function(surv_matrix, patient_ids = NULL, seed = 42, n_p
   
   df_long <- reshape2::melt(df, id.vars = "patient_id", variable.name = "time", value.name = "surv_prob")
   df_long$time <- as.numeric(as.character(df_long$time))
- 
+  
   # Plot
   ggplot(df_long, aes(x = time, y = surv_prob, color = patient_id)) +
     geom_line(linewidth = 1) +
@@ -1595,9 +1036,12 @@ plot_survival_curves <- function(surv_matrix, patient_ids = NULL, seed = 42, n_p
   
 }
 
-extract_expm_entries <- function(list_exp, lambda) {
+# ---- Extract info from bootstrap and point estimates synthetic data-----
+# When calculated with Expected mortality
+extract_expm_entries_synthetic <- function(list_exp, list_exp_pe, lambda) {
   lapply(seq_along(list_exp), function(dataset_idx) {
     dataset_results <- list_exp[[dataset_idx]]
+    dataset_results_pe <- list_exp_pe[[dataset_idx]]
     
     lapply(names(dataset_results), function(name) {
       if (name == "batch.metrics") return(NULL)
@@ -1607,7 +1051,7 @@ extract_expm_entries <- function(list_exp, lambda) {
       
       entries <- lapply(seq_along(metrics), function(i) {
         metric_name <- metrics[i]
-        mean_c <- result$mean[i]
+        mean_c <- dataset_results_pe[[name]][[metric_name]]
         ci <- result$confidence.intervals[i, ]
         
         data.frame(
@@ -1628,9 +1072,95 @@ extract_expm_entries <- function(list_exp, lambda) {
       bind_rows()  
   })
 }
-extract_surv_entries <- function(list_surv, lambda) {
+
+# ---- Extract info from bootstrap and point estimates synthetic data-----
+# When calculated with RMST
+extract_rmst_entries_synthetic <- function(list_rmst, list_rmst_pe, lambda) {
+
+  lapply(seq_along(list_rmst), function(dataset_idx) {
+    dataset_results <- list_rmst[[dataset_idx]]
+    dataset_results_pe <- list_rmst_pe[[dataset_idx]]
+
+    lapply(names(dataset_results), function(name) {
+      if (name == "batch.metrics") return(NULL)
+      
+      result <- dataset_results[[name]]
+      metrics <- names(result$mean)
+      
+      entries <- lapply(seq_along(metrics), function(i) {
+        metric_name <- metrics[i]
+        mean_c <- dataset_results_pe[[name]][[metric_name]]
+        ci <- result$confidence.intervals[i, ]
+       
+        data.frame(
+          Lambda = lambda,
+          Dataset = dataset_idx,
+          Metric = metric_name,
+          Model = "CoxPH",
+          Cindex = mean_c,
+          Lower = ci[1],
+          Upper = ci[2],
+          InputType = "RMST",
+          stringsAsFactors = FALSE
+        )
+        
+      })
+      
+      do.call(rbind, entries)
+    }) |> 
+      bind_rows()  
+  })
+}
+
+# ---- Extract info from bootstrap and point estimates synthetic data version 2 -----
+# When calculated with Expected mortality
+extract_rmst_entries_synthetic2 <- function(list_rmst_pe, lambda, model) {
+  
+  lapply(seq_along(list_rmst_pe), function(dataset_idx) {
+    dataset_results_pe <- list_rmst_pe[[dataset_idx]]
+    
+    lapply(names(dataset_results_pe), function(name) {
+      if (name == "batch.metrics") return(NULL)
+
+      result <- dataset_results_pe[[name]]
+      metrics <- names(result)
+      metrics <- metrics[metrics %in% c("Hmisc::rcorr.cens",
+                                        "pysurvival",
+                                        "SurvMetrics::Cindex", 
+                                        "lifelines", 
+                                        "sksurv.censored",
+                                        "survC1::Est.Cval", 
+                                        "pec::cindex", 
+                                        "survival.n", 
+                                        "survival.n/G2")]
+      
+      entries <- lapply(seq_along(metrics), function(i) {
+        metric_name <- metrics[i]
+        mean_c <- dataset_results_pe[[name]][[metric_name]]
+
+        data.frame(
+          Lambda = lambda,
+          Dataset = dataset_idx,
+          Metric = metric_name,
+          Model = model,
+          Cindex = mean_c,
+          InputType = "RMST",
+          stringsAsFactors = FALSE
+        )
+        
+      })
+      
+      do.call(rbind, entries)
+    }) |> 
+      bind_rows()  
+  })
+}
+# ---- Extract info from bootstrap and point estimates synthetic data -----
+# When calculated with Survival probs
+extract_surv_entries_synthetic <- function(list_surv, list_surv_pe, lambda) {
   lapply(seq_along(list_surv), function(dataset_idx) {
     dataset_results <- list_surv[[dataset_idx]]
+    dataset_results_pe <- list_surv_pe[[dataset_idx]]
     
     lapply(names(dataset_results), function(name) {
       if (name == "batch.metrics") return(NULL)
@@ -1640,7 +1170,7 @@ extract_surv_entries <- function(list_surv, lambda) {
       
       entries <- lapply(1:2, function(i) {
         metric_name <- metrics[i]
-        mean_c <- result$mean[i]
+        mean_c <- dataset_results_pe[[name]][[metric_name]]
         ci <- result$confidence.intervals[i, ]
         
         data.frame(
@@ -1661,47 +1191,79 @@ extract_surv_entries <- function(list_surv, lambda) {
       bind_rows()
   })
 }
+# ---- Extract info from bootstrap and point estimates synthetic data version 2 -----
+# When calculated with Survival probs
+extract_surv_entries_synthetic2 <- function(list_surv_pe, lambda, model) {
+  lapply(seq_along(list_surv_pe), function(dataset_idx) {
+    dataset_results_pe <- list_surv_pe[[dataset_idx]]
 
-extract_expm_pairs <- function(list_exp, lambda, extract) {
-  all_batches <- lapply(seq_along(list_exp), function(dataset_idx) {
-    dataset_results <- list_exp[[dataset_idx]]
-
-    filtered_list <- lapply(names(dataset_results), function(name) {
-      results <- dataset_results[[name]]
-      batch_metrics <- data.frame(results$batch.metrics)
+    lapply(names(dataset_results_pe), function(name) {
+      if (name == "batch.metrics") return(NULL)
       
-      filtered_batch <- batch_metrics[, extract]
-      filtered_batch$lambda <- lambda
-      filtered_batch$dataset <- dataset_idx
-      return(filtered_batch)
-      })
-    }) 
-    
-    bind_rows(unlist(all_batches, recursive = FALSE))
-  }
+      result <- dataset_results_pe[[name]]
+      metrics <- names(result)
+      metrics <- metrics[metrics %in% c("pycox.Ant", "pycox.Adj.Ant")]
 
-extract_batch_metrics <- function(results_list) {
-  models <- names(results_list)
-  
-  # Loop over models
-  metrics_list <- lapply(models, function(model_name) {
-    model_data <- results_list[[model_name]]
-    
-    if (!is.null(model_data$batch.metrics)) {
-      df <- model_data$batch.metrics
-      df$Model <- model_name
-      return(df)
-    } else {
-      return(NULL)
-    }
+      entries <- lapply(seq_along(metrics), function(i) {
+        metric_name <- metrics[i]
+        mean_c <- dataset_results_pe[[name]][[metric_name]]
+        data.frame(
+          Lambda = lambda,
+          Dataset = dataset_idx,
+          Metric = metric_name,
+          Model = model,
+          Cindex = mean_c,
+          InputType = "Distrib.",
+          stringsAsFactors = FALSE
+        )
+      })
+      
+      do.call(rbind, entries)
+    }) |>
+      bind_rows()
   })
-  
-  # Combine all into a single data.frame
-  metrics_df <- do.call(rbind, metrics_list)
-  return(metrics_df)
 }
 
 
+# extract_rms_pairs <- function(list_rms, lambda, extract) {
+#   all_batches <- lapply(seq_along(list_rms), function(dataset_idx) {
+#     dataset_results <- list_rms[[dataset_idx]]
+# 
+#     filtered_list <- lapply(names(dataset_results), function(name) {
+#       
+#       filtered_batch <- dataset_results[[name]]
+#       filtered_batch$lambda <- lambda
+#       filtered_batch$dataset <- dataset_idx
+#       return(filtered_batch)
+#       })
+#     }) 
+#     
+#     bind_rows(unlist(all_batches, recursive = FALSE))
+#   }
+# 
+# extract_batch_metrics <- function(results_list) {
+#   models <- names(results_list)
+#   
+#   # Loop over models
+#   metrics_list <- lapply(models, function(model_name) {
+#     model_data <- results_list[[model_name]]
+#     
+#     if (!is.null(model_data$batch.metrics)) {
+#       df <- model_data$batch.metrics
+#       df$Model <- model_name
+#       return(df)
+#     } else {
+#       return(NULL)
+#     }
+#   })
+#   
+#   # Combine all into a single data.frame
+#   metrics_df <- do.call(rbind, metrics_list)
+#   return(metrics_df)
+# }
+
+# ---- Compute RMST and Expected mortality -----
+# During 5 fold cross validation
 compute_measures <- function(df, model_name, time_step = 1) {
   model_cols <- grep(paste0("^", model_name, "\\."), names(df), value = TRUE)
   surv_mat <- as.matrix(df[, model_cols])
@@ -1721,4 +1283,51 @@ compute_measures <- function(df, model_name, time_step = 1) {
               exp_mort = exp_mort,
               surv_mat = surv_mat)
   )
+}
+
+# ---- Make alluvial -----
+make_alluvial_plot <- function(df, metric, notation, 
+                               title, custom_colors) {
+  data <- df %>%
+    filter(Metric == metric, Notation == notation) %>%
+    group_by(fold_n) %>%
+    mutate(Rank = rank(-cindex, ties.method = "first")) %>%
+    ungroup() %>%
+    mutate(fold_n = factor(fold_n),
+           Rank = as.factor(Rank))
+  
+  ggplot(data,
+         aes(x = fold_n, stratum = Rank, alluvium = Model, y = 1,
+             fill = Model)) +
+    geom_flow(stat = "alluvium", lode.guidance = "forward", alpha = 0.9, color = "grey") +
+    geom_stratum(width = 0.25, color = "grey30") +
+    scale_fill_manual(values = custom_colors, labels = scales::parse_format()) +
+    labs(x = "Cross-validation Fold", y = NULL, title = NULL) +
+    ggtitle(parse(text = title)) +
+    theme_minimal(base_size = 17) +
+    theme(
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      axis.text = element_text(size = 17),  
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor.y = element_blank(),
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+      axis.title.x = element_text(size = 17),
+      axis.title.y = element_text(size = 17),
+      legend.position = "bottom"
+    )
+}
+
+extract_rmst_pairs <- function(list_rmst, lambda) {
+  all_batches <- lapply(seq_along(list_rmst), function(dataset_idx) {
+    dataset_results <- list_rmst[[dataset_idx]]
+    filtered_list <- lapply(names(dataset_results), function(name) {
+      results <- dataset_results[[name]]
+      results$lambda <- lambda
+      results$dataset <- dataset_idx
+      return(results)
+    })
+  }) 
+  
+  bind_rows(unlist(all_batches, recursive = FALSE))
 }
