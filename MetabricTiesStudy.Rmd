@@ -773,11 +773,11 @@ rmst_pec_icl_ties_T2$Notation  <-"C_tau_10"
 
 ## Add the tie not ties
 surv_df_plot$Incl.Ties.Times    <- ifelse(surv_df_plot$Metric == "pycox.Adj.Ant", 
-                                          "pycox.Adj.Ant*", "pycox.Ant")
+                                          "pycox.Adj.Ant", "pycox.Ant*")
 surv_df_plot_TT$Incl.Ties.Times <- ifelse(surv_df_plot_TT$Metric == "pycox.Adj.Ant", 
-                                          "pycox.Adj.Ant*", "pycox.Ant")
+                                          "pycox.Adj.Ant", "pycox.Ant*")
 surv_df_plot_T2$Incl.Ties.Times <- ifelse(surv_df_plot_T2$Metric == "pycox.Adj.Ant", 
-                                          "pycox.Adj.Ant*", "pycox.Ant")
+                                          "pycox.Adj.Ant", "pycox.Ant*")
 
 rmst_pec_icl_ties$Incl.Ties.Times     <- rmst_pec_icl_ties$Metric
 rmst_pec_icl_ties_TT$Incl.Ties.Times  <- rmst_pec_icl_ties_TT$Metric
@@ -855,11 +855,11 @@ n_metrics <- length(metric_levels)
 
 ## Add the tie not ties
 surv_df_plot$Incl.Ties.Times    <- ifelse(surv_df_plot$Metric == "pycox.Adj.Ant", 
-                                          FALSE, TRUE)
+                                          TRUE, FALSE)
 surv_df_plot_TT$Incl.Ties.Times <- ifelse(surv_df_plot_TT$Metric == "pycox.Adj.Ant", 
-                                          FALSE, TRUE)
+                                          TRUE, FALSE)
 surv_df_plot_T2$Incl.Ties.Times <- ifelse(surv_df_plot_T2$Metric == "pycox.Adj.Ant", 
-                                          FALSE, TRUE)
+                                          TRUE, FALSE)
 
 rmst_pec_icl_ties$Incl.Ties.Times     <- TRUE
 rmst_pec_icl_ties_TT$Incl.Ties.Times  <- TRUE
