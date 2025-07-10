@@ -386,7 +386,7 @@ metrics.wrapper <- function(predicted, surv_matrix = NULL,
       formula = Hist(time, censoring) ~ 1, 
       data = tmp, 
       eval.times = eval.times,
-      cens.model = "marginal" # default
+      cens.model = "marginal", # default marginal
     )
     # Store Cindex
     results[["pec::cindex"]] <- pec$AppCindex$res
@@ -1330,4 +1330,226 @@ extract_rmst_pairs <- function(list_rmst, lambda) {
   }) 
   
   bind_rows(unlist(all_batches, recursive = FALSE))
+}
+
+
+### ---- Same as metrics.wrapper but modification of ties ----
+metrics.wrapper2 <- function(predicted, surv_matrix = NULL, 
+                            censoring, time, 
+                            implementation, eval.times, 
+                            sksurv_train_time = NULL, # sksurv.ipcw
+                            sksurv_train_status = NULL, # sksurv.ipcw
+                            sksurv_tied_tol = NULL,
+                            pec_incl_ties_preds = TRUE, # pec TRUE default 
+                            pec_incl_ties_times = TRUE, # pec TRUE default 
+                            pec_incl_both_tied = TRUE, # pec TRUE default 
+                            hmisc_excl_ties_preds = FALSE, # default is False 
+                            pysurvival_incl_ties_preds = TRUE # default is TRUE
+                            
+) { # sksurv.ipcw
+  
+  # Initialize an empty array for the results
+  results <- list()
+  # Initialize eval.times list
+  batch.eval.times <- c()
+  # Flatten the implementation list into a single vector
+  implementation <- unlist(implementation)
+  
+  # If eval.times is missing, set to the maximum uncensoring time as in pec
+  # The maximum uncensored time is when the C-index stops updating
+  if (missing(eval.times) || is.null(eval.times) || (eval.times == "resample_max_uncensored_time")) {
+    eval.times <- max(time[censoring == 1], na.rm=TRUE) 
+  }
+  # Store the eval.times for the results
+  results$batch.eval.times <- c(results$batch.eval.times, eval.times)
+  
+  # For pec::cindex
+  if ("pec::cindex" %in% implementation) {
+    # Create a temporary dataframe
+    tmp <- data.frame(predicted, 
+                      censoring, 
+                      time)
+    
+    pec <- pec::cindex(
+      list("res" = as.matrix(1 - predicted)),
+      formula = Hist(time, censoring) ~ 1, 
+      data = tmp, 
+      eval.times = eval.times,
+      cens.model = "marginal", # default marginal
+      tiedPredictionsIn = pec_incl_ties_preds, # by default TRUE including them
+      tiedOutcomeIn = pec_incl_ties_times, # by default TRUE including tied times (their docu is wrong)
+      tiedMatchIn = pec_incl_both_tied # by default TRUE including pairs with identical times and preds.
+    )
+    # Store Cindex
+    results[["pec::cindex"]] <- pec$AppCindex$res
+    # Store elegible pairs
+    results[["pec::cindex.EP"]] <- pec$Pairs$res
+    # Store concordant pairs
+    results[["pec::cindex.CP"]] <- pec$Concordant$res
+    
+  }
+  
+  # Uno's real implementation: 
+  # https://github.com/cran/survC1/blob/master/R/FUN-cstat-ver003b.R
+  # https://github.com/cran/survC1/blob/master/src/husurvC1v1.f
+  if ("survC1::Est.Cval" %in% implementation) {
+    # Need to create this survival object: 
+    results[["survC1::Est.Cval"]] <- 
+      survC1::Est.Cval(data.frame(time, 
+                                  censoring, 
+                                  predicted), # Expects risk scores
+                       tau=eval.times, 
+                       nofit=TRUE)$Dhat 
+  }
+  
+  # For Harrel's real implementation
+  if ("Hmisc::rcorr.cens" %in% implementation) {
+    
+    hmisc <- Hmisc::rcorr.cens(x = 1 - predicted, 
+                               S = Surv(time, censoring), 
+                               outx = hmisc_excl_ties_preds) # to control for it
+    
+    results[["Hmisc::rcorr.cens"]] <- hmisc[["C Index"]]
+    results[["Hmisc::rcorr.cens.EP"]] <- hmisc[["Relevant Pairs"]]
+    results[["Hmisc::rcorr.cens.CP"]] <- hmisc[["Concordant"]]
+    #results[["Hmisc::rcorr.cens.CP"]] <- hmisc[["Uncertain"]]
+    
+  }
+  
+  # For SurvMetrics::Cindex
+  if ("SurvMetrics::Cindex" %in% implementation) {
+    # Need to create this survival object: 
+    surv_obj = Surv(time, censoring)
+    # Calculate the metric
+    # t_star is only used to extract surv at a specific time point
+    # not to calculate 
+    results[["SurvMetrics::Cindex"]] <-
+      SurvMetrics::Cindex(surv_obj, predicted=1-predicted, 
+                          t_star = eval.times)[[1]]
+    
+  }
+  
+  # For randomForestSRC::get.cindex 
+  if ("randomForestSRC::get.cindex" %in% implementation) {
+    results[["randomForestSRC::get.cindex"]] <- 
+      randomForestSRC::get.cindex(predicted = 1 - predicted,
+                                  censoring = censoring,
+                                  time = time) 
+  }
+  
+  # lifelines::concordance_index implementation
+  if ("lifelines" %in% implementation) {
+    # Handle Python implementations
+    results[["lifelines"]] <- lifelinesR(time, predicted, censoring)
+    
+  }
+  # https://github.com/havakv/pycox/blob/master/pycox/evaluation/concordance.py#L12
+  # using the eval.times only to subset the survival probabilities at a time point
+  if ("pycox.Ant" %in% implementation) {
+    # Handle Python implementations
+    #results[["pycox"]] <- pycoxR(time, predicted, censoring, eval.times)
+    pycox_ant <- pycoxR_SurvMatrix_Ant(time=time, 
+                                       surv_matrix=surv_matrix, 
+                                       censoring=censoring)
+    
+    results[["pycox.Ant"]] <- pycox_ant$cindex
+    results[["pycox.Ant.EP"]] <- pycox_ant$comparable
+    results[["pycox.Ant.CP"]] <- pycox_ant$concordant
+  }
+  if ("pycox.Adj.Ant" %in% implementation) {
+    # Handle Python implementations
+    #results[["pycox"]] <- pycoxR(time, predicted, censoring, eval.times)
+    pycox_adj <- pycoxR_SurvMatrix_AdjAnt(time=time, 
+                                          surv_matrix=surv_matrix, 
+                                          censoring=censoring)
+    
+    results[["pycox.Adj.Ant"]] <- pycox_adj$cindex
+    results[["pycox.Adj.Ant.EP"]] <- pycox_adj$comparable
+    results[["pycox.Adj.Ant.CP"]] <- pycox_adj$concordant
+  }
+  
+  # For pysurvival we have extracted the function of interest in file pysurvivalR.tar.gz
+  # https://github.com/square/pysurvival/blob/master/pysurvival/cpp_extensions/metrics.cpp
+  if ("pysurvival" %in% implementation){
+    # R wrapped version of python/c++ library pysurvival
+    
+    pysurv <- pysurvivalR::concordance_index(risk=predicted,
+                                             T=time,
+                                             E=censoring,
+                                             include_ties = pysurvival_incl_ties_preds) # risk ties default\
+    
+    results[["pysurvival"]] <- pysurv$`0` 
+    results[["pysulvival.EP"]] <- pysurv$`1` 
+    results[["pysulvival.CP"]] <- pysurv$`2` 
+    
+  }
+  
+  # For sksurv without ipcw
+  if ("sksurv.censored" %in% implementation) { # Like Harrels
+    sksurv <- sksurv.censoredR(time,
+                               predicted, 
+                               censoring)
+    
+    results[["sksurv.censored"]] <- sksurv[[1]] # C index
+    results[["sksurv.censored.CP"]] <- sksurv[[2]] # Concordant
+    results[["sksurv.censored.DP"]] <- sksurv[[3]] # Disconcordant
+    results[["sksurv.censored.TR"]] <- sksurv[[4]] # tied risk
+    results[["sksurv.censored.TT"]] <- sksurv[[5]] # tied time
+  }
+  
+  # For sksurv with ipcw
+  if ("sksurv.ipcw" %in% implementation) { # Like Uno's
+    sksurv <- sksurv.ipcwR(time,
+                           predicted,
+                           censoring,
+                           eval.times,
+                           sksurv_train_time, 
+                           sksurv_train_status, 
+                           sksurv_tied_tol)
+    
+    results[["sksurv.ipcw"]] <- sksurv[[1]] # C index
+    results[["sksurv.ipcw.CP"]] <- sksurv[[2]] # Concordant
+    results[["sksurv.ipcw.DP"]] <- sksurv[[3]] # Disconcordant
+    results[["sksurv.ipcw.TR"]] <- sksurv[[4]] # tied risk
+    results[["sksurv.ipcw.TT"]] <- sksurv[[5]] # tied time
+  }
+  
+  # For survival with IPCW
+  if ("survival.n/G2" %in% implementation) {
+    
+    predicted = 1- predicted 
+    surv.conc <- survival::concordance(Surv(time, censoring) ~ predicted, 
+                                       timewt ="n/G2", ymax = eval.times)
+    results[["survival.n/G2"]] <- surv.conc$concordance
+    results[["survival.n/G2.CP"]]  <- surv.conc$count[["concordant"]] # Concordanct
+    results[["survival.n/G2.DP"]]  <- surv.conc$count[["discordant"]] # Discordant
+    results[["survival.n/G2.TR"]]  <- surv.conc$count[["tied.x"]] # Tied risk
+    results[["survival.n/G2.TT"]]  <- surv.conc$count[["tied.y"]] # Tied time
+    results[["survival.n/G2.TB"]]  <- surv.conc$count[["tied.xy"]] # Tied both time and risk
+    
+  }
+  
+  # For survival without IPCW
+  if ("survival.n" %in% implementation) {
+    
+    predicted = predicted # expects survival? confusing....
+    surv.conc <- survival::concordance(Surv(time, censoring) ~ predicted, 
+                                       timewt = "n", ymax = eval.times)
+    results[["survival.n"]] <- surv.conc$concordance
+    results[["survival.n.CP"]]  <- surv.conc$count[["concordant"]] # Concordanct
+    results[["survival.n.DP"]]  <- surv.conc$count[["discordant"]] # Discordant
+    results[["survival.n.TR"]]  <- surv.conc$count[["tied.x"]] # Tied risk
+    results[["survival.n.TT"]]  <- surv.conc$count[["tied.y"]] # Tied time
+    results[["survival.n.TB"]]  <- surv.conc$count[["tied.xy"]] # Tied both time and risk
+    
+  }
+  
+  if (length(results) == 0) {
+    stop("Missing implementation list.
+         It is required a list with all the c-index 
+         implementations that need to be computed")
+  }
+  
+  return(results)
+  
 }
