@@ -454,7 +454,7 @@ for (rmst in select_rmst) {
                                      censoring = "test_status",
                                      time = "test_time"),
                                   implementation = list("pec::cindex"),
-                                  eval.times = 100, #C
+                                  eval.times = 120, #C
                                   sampled_data = subset_rmst, 
                                   additional = list(
                                     pec_incl_ties_pred = TRUE,
@@ -467,7 +467,7 @@ for (rmst in select_rmst) {
                                                         censoring = stacked_predictions$test_status,
                                                         time = stacked_predictions$test_time,
                                                         implementation = list("pec::cindex"),
-                                                        eval.times = 100,
+                                                        eval.times = 120,
                                                         pec_incl_ties_pred = TRUE,
                                                         pec_incl_ties_times = TRUE,
                                                         pec_incl_both_tied = TRUE
@@ -479,7 +479,7 @@ for (rmst in select_rmst) {
                                      censoring = "test_status",
                                      time = "test_time"),
                                   implementation = list("pec::cindex"),
-                                  eval.times = 100, #C
+                                  eval.times = 120, #C
                                   sampled_data = subset_rmst, 
                                   additional = list(
                                     pec_incl_ties_pred = TRUE,
@@ -492,7 +492,7 @@ for (rmst in select_rmst) {
                                                         censoring = stacked_predictions$test_status,
                                                         time = stacked_predictions$test_time,
                                                         implementation = list("pec::cindex"),
-                                                        eval.times = 100,
+                                                        eval.times = 120,
                                                         pec_incl_ties_pred = TRUE,
                                                         pec_incl_ties_times = FALSE,
                                                         pec_incl_both_tied = FALSE)
@@ -554,7 +554,7 @@ for (rmst in select_rmst_TT) {
                                      censoring = "test_status",
                                      time = "test_time"),
                                   implementation = list("pec::cindex"),
-                                  eval.times = 100, #C
+                                  eval.times = 120, #C
                                   sampled_data = subset_rmst_TT, 
                                   additional = list(
                                     pec_incl_ties_pred = TRUE,
@@ -567,7 +567,7 @@ for (rmst in select_rmst_TT) {
                                                         censoring = stacked_predictions_TT$test_status,
                                                         time = stacked_predictions_TT$test_time,
                                                         implementation = list("pec::cindex"),
-                                                        eval.times = 100,
+                                                        eval.times = 120,
                                                         pec_incl_ties_pred = TRUE,
                                                         pec_incl_ties_times = TRUE,
                                                         pec_incl_both_tied = TRUE
@@ -579,7 +579,7 @@ for (rmst in select_rmst_TT) {
                                      censoring = "test_status",
                                      time = "test_time"),
                                   implementation = list("pec::cindex"),
-                                  eval.times = 100, #C
+                                  eval.times = 120, #C
                                   sampled_data = subset_rmst_TT, 
                                   additional = list(
                                     pec_incl_ties_pred = TRUE,
@@ -592,7 +592,7 @@ for (rmst in select_rmst_TT) {
                                                         censoring = stacked_predictions_TT$test_status,
                                                         time = stacked_predictions_TT$test_time,
                                                         implementation = list("pec::cindex"),
-                                                        eval.times = 100,
+                                                        eval.times = 120,
                                                         pec_incl_ties_pred = TRUE,
                                                         pec_incl_ties_times = FALSE,
                                                         pec_incl_both_tied = FALSE)
@@ -653,7 +653,7 @@ for (rmst in select_rmst_T2) {
                                      censoring = "test_status",
                                      time = "test_time"),
                                   implementation = list("pec::cindex"),
-                                  eval.times = 100, #C
+                                  eval.times = 120, #C
                                   sampled_data = subset_rmst_T2, 
                                   additional = list(
                                     pec_incl_ties_pred = TRUE,
@@ -666,7 +666,7 @@ for (rmst in select_rmst_T2) {
                                                         censoring = stacked_predictions_T2$test_status,
                                                         time = stacked_predictions_T2$test_time,
                                                         implementation = list("pec::cindex"),
-                                                        eval.times = 100,
+                                                        eval.times = 120,
                                                         pec_incl_ties_pred = TRUE,
                                                         pec_incl_ties_times = TRUE,
                                                         pec_incl_both_tied = TRUE
@@ -678,7 +678,7 @@ for (rmst in select_rmst_T2) {
                                      censoring = "test_status",
                                      time = "test_time"),
                                   implementation = list("pec::cindex"),
-                                  eval.times = 100, #C
+                                  eval.times = 120, #C
                                   sampled_data = subset_rmst_T2, 
                                   additional = list(
                                     pec_incl_ties_pred = TRUE,
@@ -691,7 +691,7 @@ for (rmst in select_rmst_T2) {
                                                         censoring = stacked_predictions_T2$test_status,
                                                         time = stacked_predictions_T2$test_time,
                                                         implementation = list("pec::cindex"),
-                                                        eval.times = 100,
+                                                        eval.times = 120,
                                                         pec_incl_ties_pred = TRUE,
                                                         pec_incl_ties_times = FALSE,
                                                         pec_incl_both_tied = FALSE)
@@ -891,6 +891,10 @@ subset_latex <- subset_latex[order(subset_latex$Notation,
                                    subset_latex$Rounding,
                                    subset_latex$Incl.Ties.Times), ]
 
+
+# library(kableExtra)
+ as_latex <- subset_latex %>%
+   kable(format = "latex", booktabs = TRUE)
 ```
 
 
@@ -1289,7 +1293,7 @@ for (rmst in preds) {
                                   implementation = list("Hmisc::rcorr.cens",
                                                         "pysurvival",
                                                         "pec::cindex"),
-                                  eval.times = 100, #C
+                                  eval.times = 120, #C
                                   sampled_data = subset_rmst, 
                                   additional = list(
                                     pec_incl_ties_preds = FALSE, # pec TRUE default 
@@ -1307,7 +1311,7 @@ for (rmst in preds) {
                                   implementation = list("Hmisc::rcorr.cens",
                                                         "pysurvival",
                                                         "pec::cindex"),
-                                  eval.times = 100, #C
+                                  eval.times = 120, #C
                                   sampled_data = subset_rmst, 
                                   additional = list(
                                     pec_incl_ties_preds = TRUE, # pec TRUE default 
@@ -1323,7 +1327,7 @@ for (rmst in preds) {
                                                     implementation = list("Hmisc::rcorr.cens",
                                                                           "pysurvival",
                                                                           "pec::cindex"),
-                                                    eval.times =  100, 
+                                                    eval.times =  120, 
                                                     pec_incl_ties_preds = TRUE, # pec TRUE default 
                                                     pec_incl_ties_times = TRUE, # pec TRUE default 
                                                     pec_incl_both_tied = TRUE, # pec TRUE default 
@@ -1336,7 +1340,7 @@ for (rmst in preds) {
                                                     implementation = list("Hmisc::rcorr.cens",
                                                                           "pysurvival",
                                                                           "pec::cindex"),
-                                                    eval.times =  100, 
+                                                    eval.times =  120, 
                                                     pec_incl_ties_preds = FALSE, # pec TRUE default 
                                                     pec_incl_ties_times = TRUE, # pec TRUE default 
                                                     pec_incl_both_tied = FALSE, # pec TRUE default 
@@ -1383,11 +1387,11 @@ surv_df_plot <- make_surv_plot_entries(results_surv, results_surv_pe)
 ```
 
 
-```{r fig.width=15, fig.height=8}
+```{r fig.width=7, fig.height=13}
 # Add notation
 surv_df_plot$Notation           <- "C_td"
-rmst_df_plot$Notation           <- ifelse(rsmt_df_plot$Metric == "pec::cindex", "C_tau_10", "C")
-rmst_df_plot_excl_ties$Notation <- ifelse(rsmt_df_plot_excl_ties$Metric == "pec::cindex", "C_tau_10", "C")
+rmst_df_plot$Notation           <- ifelse(rmst_df_plot$Metric == "pec::cindex", "C_tau_10", "C")
+rmst_df_plot_excl_ties$Notation <- ifelse(rmst_df_plot_excl_ties$Metric == "pec::cindex", "C_tau_10", "C")
 
 
 ## Add the tie not ties
@@ -1411,7 +1415,7 @@ df_plot$Rounding <- factor(df_plot$Model, levels = c("CoxPH", "CoxPH_round", "Co
 df_plot$Notation <- factor(df_plot$Notation, levels = c("C", "C_tau_10", "C_td"),
                            labels = c(
                              "tilde(C)~(RMST)",
-                             "tilde(C)[tau]~(RMST~tau==100)",
+                             "tilde(C)[tau]~(RMST~tau==10~y)",
                              "tilde(C)[td](Surv.Prob.)"
                            ))
 
@@ -1421,7 +1425,7 @@ df_plot$Model <- factor(df_plot$Model, levels = c("CoxPH", "CoxPH_round", "CoxPH
  ggplot(df_plot, aes(x = Incl.Ties.Preds, y = cindex, color = Model)) +
   geom_pointrange(aes(ymin = lower, ymax = upper),
                   position = position_dodge(width = 0.6), size = 0.6) +
-   facet_wrap(~ Notation + Rounding, nrow = 1, scales = "free_x", labeller = label_parsed)+
+   facet_wrap(~ Notation + Rounding, nrow = 3, scales = "free_x", labeller = label_parsed)+
   #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
   ylim(0.5, 0.7) +
   labs(title = "",
