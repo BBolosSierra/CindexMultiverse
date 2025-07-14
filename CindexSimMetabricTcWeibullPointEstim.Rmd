@@ -6,10 +6,11 @@ date: "2025-02-27"
 
 ## Concordance index multiverse.
 
+### Simulation data: Non-informative Weibull.  
 
 Load libraries
 
-```{r, include=FALSE}
+```{r Load libraries, include=FALSE}
 # Survival metrics
 library(reticulate)
 library(arrow)
@@ -35,23 +36,14 @@ library(flexsurv)
 library(furrr)
 library(pysurvivalR)
 library(survivalmodels)
+library(tidyverse)
+library(patchwork)
+library(stringr) 
 ```
 
 
-```{r}
-#conda create -n py-rstudio python=3.10
-#conda activate py-rstudio
-#conda config --add channels conda-forge
-#conda config --set channel_priority strict
-#conda install numpy
-#conda install pycox
-#conda install lifelines
-#conda install numba
-#conda install furrr
-```
 
-
-```{r setup, include=FALSE}
+```{r Setup, include=FALSE}
 #Sys.unsetenv("RETICULATE_PYTHON")
 Sys.setenv(OMP_NUM_THREADS = "1")       # Limits OpenMP to 1 thread
 Sys.setenv(NUMBA_NUM_THREADS = "1")     # Limits Numba to 1 thread
@@ -76,7 +68,7 @@ https://onlinelibrary.wiley.com/doi/epdf/10.1002/9781118032985.ch2?saml_referrer
 https://en.wikipedia.org/wiki/Weibull_distribution#Alternative_parameterizations
 https://www.mas.ncl.ac.uk/~nmf16/teaching/mas3311/week09.pdf
 
-A parametric weibull regression model can be parametrize in various ways. Often the **Weibull accelerated failure time** is used, and can be perfomed with \pkg{survreg} in \prog{R}. The distribution is being cast into a location-scale framework following chapter 2.2 of Kalbfleisch and Prentice: 
+A parametric weibull regression model can be parametrize in various ways. Often the **Weibull accelerated failure time** is used, and can be performed with \pkg{survreg} in \prog{R}. The distribution is being cast into a location-scale framework following chapter 2.2 of Kalbfleisch and Prentice: 
 
 
 $$\log T = Y = \mu + \boldsymbol{\alpha}^T \mathbf{z} + \sigma W,$$
@@ -101,59 +93,36 @@ Then the ratio of times for a covariate with value $z_1$ versus values $z_0$, wi
 The $p$th percentile of the (covariate-adjusted) Weibull distribution occurs at 
 $$t_p = \left[ \frac{-\log p}{\lambda e^{\boldsymbol{\beta}^T \mathbf{z}}} \right]^{1/\gamma}.$$
 
-```{r}
-# read the processed file
-mb <- read.table("./Datasets/metabric_preprocess_multiverse.csv", sep="," , header = TRUE)
+To estimate the oracle, we need the survival probabilities per patient, per dataset: 
 
-# Keep the id as index
-rownames(mb) <- mb$PATIENT_ID
+$$S(t|z) = e^{-\lambda t^{\gamma} e^{\beta^{T}z}}$$
 
-# Remove the id column
-mb <- mb[,2:12]
-
-# Sote the previous colnames to keep track of them
-cols <- colnames(mb)
-
-# Asign new column names
-newcols <- c("X1", "X2", "X3", "X4","X5", "X6", "X7", "X8", "X9", "time", "status")
-colnames(mb) <- newcols
-
-# NO NEED OF SUMING, there is no 0s... 
-min(mb$time)
-#mb$time <- mb$time + 1e-8
-
-# Order according to time and status
-mb[order(mb$time, -mb$status),]
+Where parameters estimated during the data generation such $gamma$ and $lambda$ are required. Therefore, they are stored during synthetic data generation. Subsequently, the RMST is estimated for each patient based on the survival probabilities, and utilized to estimate the oracle C-index. 
 
 
-```
 
-
-```{r}
+```{r Load functions}
 source("./CindexHelperFunctions.R")
 ```
 
 
-```{r}
+```{r Load simulated datasets}
 
 # Load the synthetic datasets and restore attributes
 datasets <- load_synthetic_datasets("./Datasets/Synthetic/10d_synthetic_WT_WTc.rds")
 
+datasets_per_lambda <- 100
+factors <- c(0, 0.5, 1.5, 3, 7, 13)
 ```
 
-
-
-#### CROSSVALIDATION WEIBULL
+### Crossvalidation
 
 Only with CoxPH
 
-```{r, eval=FALSE}
-
-# Weibull
-#datasets <- datasets_weibull
+```{r Cross-validation, message=FALSE}
 
 set.seed(123)
-# We could keep the same folds and indices since the dataframes are the same
+
 # Number of folds
 K <- 5  
 n <- nrow(datasets[[1]][[1]])  
@@ -165,18 +134,21 @@ numeric_cols <- c("X1", "X2", "X3", "X4", "X9")
 #indices <- sample(seq_len(n))
 #folds <- cut(indices, breaks = K, labels = FALSE)
 
-stacked_predictions <- list()
+stacked_predictions <- list() # to store predictions ifo
+stacked_all_betas <- list() # to store oracle info
+
 # Loop through datasets
 for (i in seq_along(datasets)){
   lambda_list <- list()
+  betas_list <- list()
   
   for (j in seq_along(datasets[[i]])) {
     # Extract dataset
     dat <- data.frame(datasets[[i]][[j]])
     attributes(dat) <- attributes(datasets[[i]][[j]])
     n <- nrow(dat)
-    
-    if (!any(is.infinite(dat$censoring_time))) {
+
+    if (!any(is.infinite(dat$censoring_time))) { # if no censoring 
       folds <- createFolds(dat$status, k = K, list = TRUE) 
     } else {
       indices <- sample(seq_len(n))
@@ -186,10 +158,11 @@ for (i in seq_along(datasets)){
     mb_t_max <- round(max(dat$observed_time))
     ts_scaled <- seq(0, mb_t_max, 1)
     fold_list <- list()
+    fold_list_beta <- list()
     
     for (k in seq_len(K)) {
       # Define test and training indices
-      if (!any(is.infinite(dat$censoring_time))) {
+      if (!any(is.infinite(dat$censoring_time))) { # if no censoring 
         mb_test_idx  <- folds[[k]]
       } else {
         mb_test_idx  <- which(folds == k)
@@ -200,8 +173,6 @@ for (i in seq_along(datasets)){
       mb_train <- dat[mb_train_idx, ]
       mb_test  <- dat[mb_test_idx, ]
       
-      #t_train_max <- max(mb_train$observed_time)
-  
       # Scale continuous 
       means <- sapply(mb_train[, numeric_cols], mean)
       sds   <- sapply(mb_train[, numeric_cols], sd)
@@ -210,16 +181,11 @@ for (i in seq_along(datasets)){
                                         center = means, scale = sds)
       mb_test[, numeric_cols]  <- scale(mb_test[, numeric_cols],
                                         center = means, scale = sds)
-    
-      #t_train_max <- max(mb_train$time)
-      #mb_train$observed_time <- mb_train$observed_time / t_train_max
-      #mb_test$observed_time <- mb_test$observed_time / t_train_max
       
       # Extract only the covariates used for predictions
       test_covariates <- mb_test[, c("X1", "X2", "X3", "X4",
                                      "X5", "X6", "X7", "X8", "X9")]
-      # intervals for prediction scaled
-      #approx_seq <- ts_scaled / t_train_max
+
       # Fit models
       cat("Dataset:", i, ".", j, '\n')
       cat("Fold:", k, '\n')
@@ -238,10 +204,17 @@ for (i in seq_along(datasets)){
                                   X3 + X4 + X5 + X6 + 
                                   X7 + X8 + X9, 
                                    data = mb_train)
+      
+      # Tracking model uncertainty
+      coefs <- summary(cox_ph)$coefficients
+      conf  <- confint(cox_ph)
+      #bh <- basehaz(cox_ph, centered = FALSE)
+
       # Predict survival object
       sf <- survfit(cox_ph, newdata = mb_test)
       surv_cox <- t(sf$surv)
-      time_grid <- sf$time #* t_train_max
+      time_grid <- sf$time
+      
       #Interpolate
       surv_cox_int <- apply(surv_cox, 1, function(s){
          approx(x = time_grid, y=s, xout = ts_scaled, rule = 2)$y
@@ -250,386 +223,570 @@ for (i in seq_along(datasets)){
       surv_cox_int <- t(surv_cox_int)
       rownames(surv_cox_int) <- rownames(mb_test)
       colnames(surv_cox_int)  <- ts_scaled
-      # Calculate expected mortality
-      cox_exp_mort <- rowSums(-log(pmax(surv_cox_int, 1e-10)))
       
       fold_results <- data.frame(dataset = i, 
                                  version = j,
                                  cv_fold = k,
-                             patients_ids = rownames(mb_test), 
-                             test_time = mb_test$observed_time, ### observed_time now!
-                             test_status = mb_test$status,
-                             ExpMort.CoxPH = cox_exp_mort,
-                             CoxPH = as.data.frame(surv_cox_int),
+                             patients_ids = rownames(mb_test),
+                             event_time = mb_test$time, 
+                             observed_time = mb_test$observed_time, ### observed_time now!
+                             observed_status = mb_test$status,
                              lambda = attributes(dat)$lambda, 
                              cp = attributes(dat)$cp,
                              seed = attributes(dat)$seed,
+                             CoxPH = as.data.frame(surv_cox_int),
                              covariates = test_covariates)
       # Append fold results to the list
       fold_list[[k]] <- fold_results
+      
+      
+      ### oracle
+      # Info from the data generation process 
+      lambda0 = attributes(dat)$lambda0
+      gamma = attributes(dat)$gamma
+      betas = attributes(dat)$beta # data generation betas, not estimated by Cox
+      mu = attributes(dat)$mu
+      sigma = attributes(dat)$sigma
+      alpha = attributes(dat)$alpha
+
+      X_mat <- as.matrix(mb_test[, paste0("X", 1:9)]) # covariates
+
+      # Compute linear predictor and lambda_i
+      lp_oracle <- X_mat %*% as.vector(betas) # computes beta*x_i
+      lambda_i  <- as.numeric(lambda0 * exp(lp_oracle)) # lambda_i = lambda_0 * exp(bet*X_i)
+      # Compute survival for the times of interest
+      S_mat <- outer(lambda_i, ts_scaled, function(l, t) exp(- (l * t^gamma)))
+
+      fold_beta_results <- data.frame(
+                            dataset = i,
+                            version = j,
+                            cv_fold = k,
+                            patients_ids = rownames(mb_test),
+                            event_time = mb_test$time, 
+                            observed_time = mb_test$observed_time, ### observed_time now!
+                            observed_status = mb_test$status,
+                            oracle_surv = as.data.frame(S_mat)
+                            
+                          )
+    fold_list_beta[[k]] <- fold_beta_results
     
     }
-    stacked <- do.call(rbind, fold_list)
-
-    # Save to final list with informative name
-    lambda_list[[j]] <- stacked
+    # Cox-predictions
+    stacked       <- do.call(rbind, fold_list)
+    # Oracle
+    stacked_betas <- do.call(rbind, fold_list_beta)
+    
+    # Compute measures for Cox
+    df <- stacked[, 1:10]
+    res <- compute_measures(stacked, "CoxPH")
+    df[[paste0("ExpMort.CoxPH")]] <- res$exp_mort
+    df[[paste0("RMST.CoxPH")]] <- res$rmst
+    
+    surv_mat <- as.data.frame(res$surv_mat)
+    df <- cbind(df, surv_mat)
+    lambda_list[[j]] <- df
+    
+    # Compute measures for Oracle
+    res <- compute_measures(stacked_betas, "oracle_surv")
+    stacked_betas[[paste0("Oracle.RMST.CoxPH")]] <- res$rmst
+    betas_list[[j]]  <- stacked_betas
+    
   }
   
   stacked_predictions[[i]] <- lambda_list
+  
+  stacked_all_betas[[i]] <- betas_list
+  
 }
 
-```
 
-```{r}
-#saveRDS(stacked_predictions, "./Results/WeibullSyntheticStackedPredictions_v2.rds")
-```
+#saveRDS(stacked_predictions, "./Results/WeibullSyntheticStackedPredictions.rds")
 
-```{r}
-stacked_predictions <- readRDS( "./Results/WeibullSyntheticStackedPredictions.rds")
-#stacked_predictions <- readRDS( "./Results/WeibullSyntheticStackedPredictions_v2.rds")
+#stacked_predictions <- readRDS( "./Results/WeibullSyntheticStackedPredictions.rds")
 ```
 
 
-#### TEST
+### C-index point estimates
 
-
-```{r}
-set.seed(123)
-
-subset_stacked <- stacked_predictions[[1]][[1]]
-
-# Boostrap each dataset 
-n_bootstraps <- 100
-# Set the size, which is the same for each dataset
-dataset_size <- 1000 #Since each dataset has the same number of rows
-# Keep the same resample indices across datasets to make it comparable
-resample_indices <- replicate(n_bootstraps, 
-                              sample(seq_len(dataset_size), 
-                                     size = dataset_size, replace = TRUE), 
-                              simplify = FALSE)
+```{r Load results checkpoint}
+#results_per_lambda <- readRDS("./Results/WeibullSynthetic.rds")
+datasets_per_lambda <- 100
+factors <- c(0, 0.5, 1.5, 3, 7, 13)
 ```
 
-
-```{r}
-test <- bootstrap.metric(metrics.wrapper, 
-                                dataset=list(
-                                   predicted = 1 - subset_stacked$CoxPH.4,
-                                   censoring = subset_stacked$test_status, 
-                                   time = subset_stacked$test_time), 
-                                implementation = list("survC1::Est.Cval"), 
-                                eval.times = NULL,
-                                resample_indices = resample_indices)
-```
-
-#### BOOTSTRAP:
-
-```{r}
-#datasets_per_lambda <- unique(stacked_predictions$version)
-datasets_per_lambda <- 10
-```
-
-```{r}
-# Set up increments
-factors <- c(0, 0.5, 1.5, 3, 7)
-censoring_increm <- seq(0, 0.4, 0.1)
-```
-
-```{r}
-#prediction_columns <- colnames(stacked_predictions[,c(1:4)])
-```
-
-All datasets are boostraped with a different resample indexes. 
+Here we will focus only in point estimates (we do not perform bootstrap). 
 
 
-```{r}
-#mean(stacked_predictions[(stacked_predictions$lambda == 7),]$time)
-```
+```{r C-index Point estimates, eval=FALSE}
 
+results_rmst_point_estim <- vector("list", length = datasets_per_lambda)
+results_rmst_point_estim2 <- vector("list", length = datasets_per_lambda)
+results_surv_point_estim <- vector("list", length = datasets_per_lambda)
 
-```{r, eval=FALSE}
-set.seed(123)
-## let's try with 1 only 
-#subset <- stacked_predictions[[3]]
-n_bootstraps <- 100
-# select columns
-selected_exps <- "ExpMort.CoxPH"
-# each dataset in subset of lambda 
-#results_expm1 <- vector("list", length = datasets_per_lambda)
-#results_expm2 <- vector("list", length = datasets_per_lambda)
-results_expm3 <- vector("list", length = datasets_per_lambda)
-#results_risk <- vector("list", length = datasets_per_lambda)
-results_surv <- vector("list", length = datasets_per_lambda)
+results_rmst_oracle <- vector("list", length = datasets_per_lambda)
+results_rmst_oracle2 <- vector("list", length = datasets_per_lambda)
+results_surv_oracle <- vector("list", length = datasets_per_lambda)
 
 cps <- list()
-model_names <- "CoxPH"
+
+model <- "CoxPH"
+rmst <- "RMST.CoxPH"
+
 results_per_lambda <- vector("list", length = length(factors))
 
 for (l in seq_along(stacked_predictions)) { 
   cat("Censoring set up ", l, "\n")
-  subset <- stacked_predictions[[l]]
-  for (dataset in seq_along(subset)) {
+  sub <- stacked_predictions[[l]]
+  # Loop through each dataset
+  for (dataset in seq_along(sub)) {
+    # Merge to get the oracle
+    subset_preds <- sub[[dataset]]
+    subset_oracle <- stacked_all_betas[[l]][[dataset]]
+    # add the oracle
+    subset <- merge(subset_preds, subset_oracle[, c("patients_ids", "Oracle.RMST.CoxPH")], 
+                    by.x = "patients_ids", by.y = "patients_ids", all=TRUE)
     # Get the size of dataset
     dataset_size <- nrow(subset[[dataset]])
     # Get lambda 
-    lambda = unique(subset[[dataset]]$lambda)
+    #lambda = unique(subset[[dataset]]$lambda)
     # Get censoring-percentage
-    cps[[dataset]] = unique(subset[[dataset]]$cp)
-    # Create bootstrap samples
-    resample_indices <- replicate(n_bootstraps, 
-                                    sample(subset[[dataset]]$patients_ids, 
-                                           size = dataset_size, replace = TRUE), 
-                                    simplify = FALSE)
-    # When eval is at max uncensored time
-    eval.tau1 <- round(max(subset[[dataset]]$test_time)) # does not matter for C implem
-    eval.tau2 <- 120 # 10 years
-    eval.tau3 <- round(max(subset[[dataset]]$test_time[subset[[dataset]]$test_status == 1]))
-    
-    # Create empty lists
-    subset_surv <- list()
-    subset_expm <- list()
-    # Boostrapping
-    for (r in seq_along(resample_indices)){
-      subset_expm[[r]] <- get_model_preds2(stacked_predictions = subset[[dataset]], 
-                   model_names = "CoxPH",
-                   input_type = "ExpectedMortality",
-                   bootstrap_patient_ids = resample_indices[[r]])
+    #cps[[dataset]] = unique(subset[[dataset]]$cp)
 
-      subset_surv[[r]] <- get_model_preds2(stacked_predictions = subset[[dataset]], 
-                  model_names = "CoxPH",
-                  input_type = "Distribution",
-                  bootstrap_patient_ids = resample_indices[[r]])
-    }
+    rmst <- "RMST.CoxPH"
     
-     for (exps in selected_exps){
-        cat("Boostrapping for lambda ", lambda, ", dataset ", 
-           dataset, "and column ", exps, "\n")
-        cat("Tau=", eval.tau3 , "\n")
-        results_expm3[[dataset]][[exps]] <-  bootstrap.metric.parallel(metrics.wrapper,
-                            dataset=list(
-                               predicted = exps,
-                               censoring = "test_status",
-                               time = "test_time"),
-                            implementation = list("Hmisc::rcorr.cens",
-                                                  "pysurvival",
-                                                  "SurvMetrics::Cindex", 
-                                                  "lifelines", 
-                                                  "sksurv.censored",
-                                                  "survC1::Est.Cval", 
-                                                  "pec::cindex", 
-                                                  "survival.n", 
-                                                  "survival.n/G2"),
-                            eval.times = eval.tau3, 
-                            sampled_data = subset_expm)
-      }
+    rmst_oracle <- "Oracle.RMST.CoxPH"
     
-    for (model in model_names) {
-      # Antolinis
-      cat("Calculating bootstrap for Distribution for Model = ", model, "\n")
-      results_surv[[dataset]][[model]] <-  bootstrap.metric(metrics.wrapper,
-                                      dataset=list(
-                                         predicted = model,
-                                         censoring = "test_status",
-                                         time = "test_time"),
-                                      implementation = list("pycox.Ant", "pycox.Adj.Ant"),
-                                      sampled_data = subset_surv)
-    }
+    cat("Point estimate for lambda dataset ", dataset, "and column ", rmst, "\n")
+    
+    # At maximum uncensored times as tau  
+    results_rmst_point_estim[[dataset]][[rmst]] <- metrics.wrapper(predicted =
+                                                           subset[[rmst]], 
+                                                censoring = subset$observed_status, 
+                                                time = subset$observed_time, 
+                                                implementation = 
+                                                list("Hmisc::rcorr.cens",
+                                                    "pec::cindex", 
+                                                    "survival.n", 
+                                                    "survival.n/G2"), 
+                                                eval.times = "resample_max_uncensored_time")
+    
+    results_rmst_oracle[[dataset]][[rmst]] <- metrics.wrapper(predicted =
+                                                           subset_oracle[[rmst_oracle]],
+                                                censoring = rep(1, nrow(subset_oracle)),
+                                                time = subset_oracle$event_time,
+                                                implementation =
+                                                list("Hmisc::rcorr.cens",
+                                                    "pec::cindex",
+                                                    "survival.n",
+                                                    "survival.n/G2"),
+                                                eval.times = "resample_max_uncensored_time")
+    # At 100 as tau
+    results_rmst_point_estim2[[dataset]][[rmst]] <- metrics.wrapper(predicted =
+                                                           subset[[rmst]], 
+                                                censoring = subset$observed_status, 
+                                                time = subset$observed_time, 
+                                                implementation = 
+                                                list("Hmisc::rcorr.cens",
+                                                    "pec::cindex",
+                                                    "survival.n",
+                                                    "survival.n/G2"), 
+                                                eval.times = 100)
+    
+    results_rmst_oracle2[[dataset]][[rmst]] <- metrics.wrapper(predicted =
+                                                           subset_oracle[[rmst_oracle]],
+                                                censoring = rep(1, nrow(subset_oracle)),
+                                                time = subset_oracle$event_time,
+                                                implementation =
+                                                list("Hmisc::rcorr.cens",
+                                                    "pec::cindex",
+                                                    "survival.n",
+                                                    "survival.n/G2"),
+                                                eval.times = 100)
+    
+
+    cat("Point estimate for Distribution for Model = ", model, "\n")
+      
+    surv_mat = subset[, grep("^CoxPH", names(subset), 
+                                        value = TRUE), drop = FALSE]
+    
+    surv_mat_oracle = subset_oracle[, grep("^oracle_surv", names(subset_oracle),
+                                                      value = TRUE), drop = FALSE]
+    
+
+    colnames(surv_mat) <- as.numeric(sub(".*\\.", "", colnames(surv_mat)))
+    colnames(surv_mat_oracle) <- as.numeric(sub(".*\\V", "", colnames(surv_mat_oracle)))
+    
+    results_surv_point_estim[[dataset]][[model]] <- metrics.wrapper(surv_matrix = surv_mat, 
+                                                      censoring = subset$observed_status, 
+                                                      time = subset$observed_time, 
+                                                      implementation = list("pycox.Ant", 
+                                                                            "pycox.Adj.Ant"))
+
+    results_surv_oracle[[dataset]][[model]] <- metrics.wrapper(surv_matrix = surv_mat_oracle,
+                                                  censoring = rep(1, nrow(subset_oracle)),
+                                                  time = subset_oracle$event_time,
+                                                  implementation = list("pycox.Ant",
+                                                                        "pycox.Adj.Ant"))
   }
-  #results_per_lambda[[l]] <- list(results_expm1, results_expm2,
-  #                                results_expm3, results_surv)
-  results_per_lambda[[l]] <- list(results_expm3, results_surv)
+
+  results_per_lambda[[l]] <- list(results_rmst_point_estim,
+                                  results_surv_point_estim, 
+                                  results_rmst_point_estim2, 
+                                  results_rmst_oracle,
+                                  results_surv_oracle, 
+                                  results_rmst_oracle2
+                                  )
 }
 
-
-
-```
-
-```{r}
-#saveRDS(results_per_lambda, "./Results/WeibullSynthetic.rds")
 #saveRDS(results_per_lambda, "./Results/WeibullSynthetic.rds")
 
 ```
 
-```{r}
-results_per_lambda <- readRDS("./Results/WeibullSynthetic.rds")
-```
-
-```{r}
-#datasets_per_lambda <- unique(stacked_predictions$version)
-datasets_per_lambda <- 10
-```
-
-```{r}
-factors <- c(0, 0.5, 1.5, 3, 7)
-```
-
-```{r}
-#lambdas <- unique(stacked_predictions$lambda)
-lambdas <- length(factors)
-```
 
 
-#### Plot
+### Plot results
 
-```{r}
+```{r Calculate the censoring percentages}
 
 # Load the synthetic datasets and restore attributes
 datasets <- load_synthetic_datasets("./Datasets/Synthetic/10d_synthetic_WT_WTc.rds")
 
-# Check if attributes are retained
-#attributes(datasets[[1]][[1]])  # Should return "seed", "factor.cens", "cp"
+cp_by_lambda <- list()
 
-#datasets <- load_synthetic_datasets("./Datasets/Synthetic_datasets/10d_synthetic_WT_WTc.rds")
-```
-
-Range of censoring per factor:
-
-```{r}
-cp_list <- c()
-for (i in seq_along(datasets)){
+for (i in seq_along(datasets)) {
   for (j in seq_along(datasets[[i]])) {
-    # Extract dataset
-    dat <- data.frame(datasets[[i]][[j]])
     cp <- attributes(datasets[[i]][[j]])$cp
+    lambda_val <- attributes(datasets[[i]][[j]])$lambda
+    lambda_str <- as.character(lambda_val) 
+    cp_by_lambda[[lambda_str]] <- c(cp_by_lambda[[lambda_str]], cp)
   }
-   cp_list <- append(cp_list, cp)
 }
 
-cp_list
+cp_summary <- data.frame(
+  Lambda = as.numeric(names(cp_by_lambda)),
+  MinCP = sapply(cp_by_lambda, min),
+  MaxCP = sapply(cp_by_lambda, max)
+)
+
+cp_summary <- cp_summary[order(cp_summary$Lambda), ]
+
+cp_summary
+
+cp_summary$CP_Label <- ifelse(cp_summary$MinCP == cp_summary$MaxCP, paste0(cp_summary$MaxCP, "%"), paste0( cp_summary$MinCP, "%–", cp_summary$MaxCP, "%"))
+
 ```
 
-```{r}
-test <- datasets[[4]][[1]]
-```
 
-```{r}
-hist(test$observed_time)
-```
-
-```{r}
+```{r Extract information}
 all_results <- list()
-expm_entries <- list()
 surv_entries <- list()
+rmst_entries <- list()
+rmst_entries2 <- list()
+surv_entries_or <- list()
+rmst_entries_or <- list()
+rmst_entries_or2 <- list()
 
 for (l in seq_along(results_per_lambda)) {
-#  list_exp1 <- results_per_lambda[[l]][[1]]
-#  list_exp2 <- results_per_lambda[[l]][[2]]
-  list_exp  <- results_per_lambda[[l]][[1]]
-  list_surv <- results_per_lambda[[l]][[2]]
+
+
+  list_rsmt_pe <- results_per_lambda[[l]][[1]]
+  list_surv_pe <- results_per_lambda[[l]][[2]]
+  list_rmst_pe2 <- results_per_lambda[[l]][[3]]
+  list_rsmt_or <- results_per_lambda[[l]][[4]]
+  list_surv_or <- results_per_lambda[[l]][[5]]
+  list_rsmt_or2 <- results_per_lambda[[l]][[6]]
+  
   
   lambda <- factors[[l]]
 
-  # Extract raw entries
-#  raw_exp1 <- extract_expm_entries(list_exp1, lambda)
-#  raw_exp2 <- extract_expm_entries(list_exp2, lambda)
-  raw_exp <- extract_expm_entries(list_exp, lambda)
-  raw_surv <- extract_surv_entries(list_surv, lambda)
-
-  # Flatten each entry safely
-#  expm_entries_1[[l]] <- do.call(rbind, raw_exp1)
-#  expm_entries_2[[l]] <- do.call(rbind, raw_exp2)
-  expm_entries[[l]] <- do.call(rbind, raw_exp)
-  surv_entries[[l]]   <- do.call(rbind, raw_surv)
-
-#  expm_entries_1[[l]]$Notation <- "C"
-#  expm_entries_2[[l]]$Notation <- "C_tau_10"
-  expm_entries[[l]]$Notation   <- "C_tau"
-  surv_entries[[l]]$Notation   <- "C_td"
+  raw_rmst <- extract_rmst_entries_synthetic2(list_rmst_pe = list_rsmt_pe,
+                                             lambda = lambda, model ="CoxPH")
+  raw_surv <- extract_surv_entries_synthetic2(list_surv_pe = list_surv_pe,
+                                             lambda = lambda,  model ="CoxPH")
+  raw_rmst2 <- extract_rmst_entries_synthetic2(list_rmst_pe = list_rmst_pe2,
+                                             lambda = lambda,  model ="CoxPH")
+  raw_rmst_or <- extract_rmst_entries_synthetic2(list_rmst_pe = list_rsmt_or,
+                                            lambda = lambda,  model ="Oracle")
+  raw_surv_or <- extract_surv_entries_synthetic2(list_surv_pe = list_surv_or,
+                                            lambda = lambda, model ="Oracle")
+  raw_rmst_or2 <- extract_rmst_entries_synthetic2(list_rmst_pe = list_rsmt_or2,
+                                            lambda = lambda,  model ="Oracle")
   
-  #all_results[[l]] <- bind_rows(expm_entries_1[[l]], expm_entries_2[[l]], 
-  #                              expm_entries_3[[l]], surv_entries[[l]])
-  all_results[[l]] <- bind_rows(expm_entries[[l]], surv_entries[[l]])
+  # Flatten each entry safely
+  rmst_entries[[l]] <- do.call(rbind, raw_rmst)
+  rmst_entries2[[l]] <- do.call(rbind, raw_rmst2)
+  surv_entries[[l]] <- do.call(rbind, raw_surv)
+  rmst_entries_or[[l]] <- do.call(rbind, raw_rmst_or)
+  surv_entries_or[[l]] <- do.call(rbind, raw_surv_or)
+  rmst_entries_or2[[l]] <- do.call(rbind, raw_rmst_or2)
+
+  rmst_entries[[l]]$Measure <- "Point Estim."
+  rmst_entries2[[l]]$Measure <- "Point Estim."
+  surv_entries[[l]]$Measure <- "Point Estim."
+  rmst_entries_or[[l]]$Measure <- "Oracle"
+  surv_entries_or[[l]]$Measure <- "Oracle"
+  rmst_entries_or2[[l]]$Measure <- "Oracle"
+
+
+  c_s <- c("Hmisc::rcorr.cens",
+           "pysurvival",
+           "SurvMetrics::Cindex", 
+           "lifelines",
+           "sksurv.censored")
+  
+  rmst_entries[[l]]$Measure <- ifelse(rmst_entries[[l]]$Metric %in% c_s, "tilde(C)~(RMST)",
+                                      "tilde(C)[tau]~(RMST~tau==max*(T:~Delta==1))")
+  rmst_entries2[[l]]$Measure <- "tilde(C)[tau]~(RMST~tau==100~months)"
+  surv_entries[[l]]$Measure <- "tilde(C)[td]~(Survival~Distribution)"
+  
+  
+  rmst_entries[[l]]$Notation <- ifelse(rmst_entries[[l]]$Metric %in% c_s, "tilde(C)~(RMST)",
+                                       "tilde(C)[tau]~(RMST~tau)")
+  rmst_entries2[[l]]$Notation <- "tilde(C)[tau]~(RMST~tau)"
+  surv_entries[[l]]$Notation <- "tilde(C)[td]~(Survival~Distribution)"
+  
+  rmst_entries_or[[l]]$Measure <- ifelse(rmst_entries_or[[l]]$Metric %in% c_s, "tilde(C)~(RMST)",
+                                      "tilde(C)[tau]~(RMST~tau==max*(T:~Delta==1))")
+  rmst_entries_or2[[l]]$Measure <- "tilde(C)[tau]~(RMST~tau==100~months)"
+  surv_entries_or[[l]]$Measure <- "tilde(C)[td]~(Survival~Distribution)"
+  
+  
+  rmst_entries_or[[l]]$Notation <- ifelse(rmst_entries_or[[l]]$Metric %in% c_s, "tilde(C)~(RMST)",
+                                       "tilde(C)[tau]~(RMST~tau)")
+  rmst_entries_or2[[l]]$Notation <- "tilde(C)[tau]~(RMST~tau)"
+  surv_entries_or[[l]]$Notation <- "tilde(C)[td]~(Survival~Distribution)"
+  
+  
+  all_results[[l]] <- bind_rows(rmst_entries[[l]],
+                                rmst_entries2[[l]],
+                                surv_entries[[l]],
+                                rmst_entries_or[[l]],
+                                rmst_entries_or2[[l]],
+                                surv_entries_or[[l]]
+                                )
 }
-#exp_df <- do.call(rbind, unlist(expm_entries_all, recursive = FALSE))
+
 final_df <- do.call(rbind, all_results)
+
+final_df <- merge(final_df, cp_summary[, c("Lambda", "CP_Label")], by = "Lambda")
+
+
+imp_map <- data.frame(
+  Metric = c("Hmisc::rcorr.cens", "SurvMetrics::Cindex", "lifelines", "pysurvival",
+             "sksurv.censored", "pec::cindex", "survC1::Est.Cval", "survival.n",
+             "survival.n/G2", "pycox.Ant", "pycox.Adj.Ant", "sksurv.ipcw"),
+  Implementation = c("Hmisc", "SurvMetrics", "lifelines", "pysurvival", "sksurv.censored",
+  "pec", "survC1", 'survival.n', 'survival.n/G2',
+  "pycox.Ant", "pycox.Adj.Ant", "sksurv.ipcw"),
+  stringsAsFactors = FALSE
+)
+
+final_df <- merge(final_df, imp_map, by = "Metric", all.x = TRUE)
+
 
 #saveRDS(final_df, "./Results/SyntheticObjects/10d_c_ind_results_processed_TcW_123.rds")
 ```
 
-```{r}
-# Map the actual percentages of censoring
-final_df$cp_value <- cp_list[match(final_df$Lambda, factors)]
-```
 
-```{r, fig.width=7, fig.height=6}
+```{r Plot, fig.width=10, fig.height=11}
 
-ggplot(final_df[(final_df$Notation == "C_tau" | final_df$Notation == "C"),],
-       aes(x = as.factor(cp_value), y = Cindex)) +
+ggplot(final_df,
+       aes(x = as.factor(Lambda), y = Cindex, fill = Measure)) +
+  stat_summary(fun = median, geom = "point", shape = 21, 
+               size = 2, fill = "black", color = "black", 
+               position = position_dodge(width = 0.9)) +
   geom_violin(alpha = 0.2, color = "black") +
-  #geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
-  facet_wrap(~Metric) +
+  facet_wrap(~Implementation + Measure + Model, labeller = label_parsed) +
+  scale_fill_discrete(labels = scales::parse_format()) +  # enables LaTeX-style legend
   labs(
        y = "C-index",
        x = "Censoring percentage",
        fill = "Input Type") +
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
   
 ```
 
-```{r}
-ggplot(final_df[(final_df$Notation == "C_td"),],
-       aes(x = as.factor(cp_value), y = Cindex)) +
+
+```{r Plot with oracle fig.width=8, fig.height=9}
+
+dat_plot <- final_df
+oracle_means <- dat_plot |>
+  filter(Model == "Oracle") |>
+  group_by(Implementation, Measure) |>
+  summarise(
+    oracle_mean = mean(Cindex, na.rm = TRUE),
+    oracle_sd   = sd(Cindex, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(dat_plot[dat_plot$Model == "CoxPH", ], 
+       aes(x = CP_Label, y = Cindex, fill = Notation)) +
   geom_violin(alpha = 0.2, color = "black") +
-  #geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
-  facet_wrap(~Metric) +
+  stat_summary(
+    fun = median, geom = "point", shape = 21,
+    size = 2, fill = "black", color = "black",
+    position = position_dodge(width = 0.9)
+  ) +
+  # Oracle SD band
+  geom_rect(
+    data = oracle_means,
+    aes(xmin = -Inf, xmax = Inf,
+        ymin = oracle_mean - oracle_sd,
+        ymax = oracle_mean + oracle_sd),
+    fill = "grey40", alpha = 0.1, inherit.aes = FALSE
+  ) +
+  # Oracle horizontal mean line
+  geom_hline(
+    data = oracle_means,
+    aes(yintercept = oracle_mean),
+    color = "black", linetype = "dashed", linewidth = 0.7,
+    inherit.aes = FALSE
+  ) +
+  facet_wrap(~Implementation + Measure, labeller = label_parsed) +
+  scale_fill_discrete(labels = scales::parse_format()) +
+  labs(y = "C-index", x = "Censoring percentage") +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
+```
+
+```{r Plot subset fig.width=8, fig.height=9}
+
+final_df <- final_df[final_df$Model == "CoxPH", ]
+
+dat <- final_df[(final_df$Metric %in% c("Hmisc::rcorr.cens", "pec::cindex", "pycox.Ant")),]
+
+notation_levels <- levels(factor(dat$Notation)) 
+
+ggplot(dat,
+       aes(x = CP_Label, y = Cindex, fill = Notation)) +
+  stat_summary(fun = median, geom = "point", shape = 21, 
+               size = 2, fill = "black", color = "black", 
+               position = position_dodge(width = 0.9)) +
+  geom_violin(alpha = 0.2, color = "black") +
+  facet_wrap(~Implementation + Measure, labeller = label_parsed) +
+  scale_fill_discrete(labels = scales::parse_format()) +  
   labs(
        y = "C-index",
-       x = "Censoring percentage",
-       fill = "Input Type") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  
+       x = "Censoring percentage") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
-```{r}
-ggplot(final_df[(final_df$Notation == "C_tau" | final_df$Notation == "C"),],  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
-  geom_violin(alpha = 0.4, color = "black") +
-  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
-  facet_wrap(~Metric)
-  labs(title = "Model Performance per Lambda",
-       y = "C-index",
-       x = "Lambda",
-       fill = "Input Type") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  
+
+```{r Difference to the 0% censoring fig.width=8, fig.height=9}
+
+final_df <- final_df[final_df$Model == "CoxPH", ]
+
+final_df$GroupID <- paste(final_df$Implementation, final_df$Measure, final_df$Dataset, sep = "_")
+
+df_wide <- reshape(
+  final_df[, c("GroupID", "Lambda", "Cindex")],
+  timevar = "Lambda",
+  idvar = "GroupID",
+  direction = "wide"
+)
+
+group_split <- do.call(rbind, strsplit(df_wide$GroupID, "_"))
+df_wide$Implementation <- group_split[, 1]
+df_wide$Measure <- group_split[, 2]
+df_wide$Dataset <- group_split[, 3]
+
+
+df_wide <- df_wide[, c("Implementation", "Measure", "Dataset", sort(names(df_wide)[grep("Cindex.", names(df_wide))]))]
+
+# from previous dat
+notation_levels <- levels(factor(dat$Notation)) 
+
+lambda_cols <- grep("^Cindex\\.", names(df_wide), value = TRUE)
+lambda_vals <- sub("Cindex\\.", "", lambda_cols)
+lambda_vals <- sort(as.numeric(lambda_vals))
+
+# Generate all diffs from baseline (lambda = 0)
+for (l in lambda_vals[lambda_vals != 0]) {
+  df_wide[[paste0("Diff_0_vs", l)]] <- df_wide[[paste0("Cindex.", l)]] - df_wide$Cindex.0
+}
+
+diff_cols <- grep("^Diff_0_vs", names(df_wide), value = TRUE)
+
+# Melt into long format
+df_diff_long <- reshape(
+  df_wide[, c("Implementation", "Measure", "Dataset", diff_cols)],
+  varying = diff_cols,
+  v.names = "CindexDiff",
+  timevar = "Lambda",
+  times = sub("Diff_0_vs", "", diff_cols),
+  direction = "long"
+)
+
+
+dat <- df_diff_long[(df_diff_long$Implementation %in% c("Hmisc", "pec", "pycox.Ant")),]
+
+# Manual relabeling
+dat$DeltaCP_Label <- dplyr::case_when(
+  dat$Lambda == "0.5" ~ "14.2%–21.1%",
+  dat$Lambda == "1.5" ~ "30.8%–39.7%",
+  dat$Lambda == "3"   ~ "43.3%–51.2%",
+  dat$Lambda == "7"   ~ "58.4%–65.8%",
+  dat$Lambda == "13"  ~ "68.6%–75.7%",
+  TRUE ~ NA_character_
+)
+
+# Manual relabeling
+dat$Notation <- dplyr::case_when(
+  dat$Implementation == "pec" ~ "tilde(C)[tau]~(RMST~tau)",
+  dat$Implementation == "pycox.Ant"   ~ "tilde(C)[td]~(Survival~Distribution)",
+  dat$Implementation == "Hmisc" ~ "tilde(C)~(RMST)",
+  TRUE ~ NA_character_
+)
+
+pastel_colors <- c(
+  "tilde(C)[tau]~(RMST~tau)" = "#FB9A99",   
+  "tilde(C)[td]~(Survival~Distribution)" = "#B2DF8A",
+  "tilde(C)~(RMST)" = "#A6CEE3"
+)
+
+ggplot(dat, aes(x = as.factor(DeltaCP_Label), y = CindexDiff, fill = Notation)) +
+  geom_violin(alpha = 0.2, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  stat_summary(fun = median, geom = "point", shape = 21, 
+             size = 2, fill = "black", color = "black", 
+             position = position_dodge(width = 0.9)) +
+  geom_violin(alpha = 0.2) +
+  facet_wrap(~Implementation + Measure, labeller = label_parsed) +
+  scale_fill_manual(values = pastel_colors, labels = scales::parse_format())+
+  labs(
+    x = "Censoring percentage",
+    y = "C-index difference from baseline (0% censoring)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
 ```
+
+
 
 Looking at the comparable/concordant of survival.n and survival.n/G2
 
-```{r}
 
-extract <- c(
-  "survival.n.G2",
-  "survival.n.G2.CP",
-  "survival.n.G2.DP",
-  "survival.n.G2.TR",
-  "survival.n.G2.TT",
-  "survival.n.G2.TB",
-  "survival.n",
-  "survival.n.CP",
-  "survival.n.DP",
-  "survival.n.TR",
-  "survival.n.TT",
-  "survival.n.TB"
-)
-
-```
-
-
-```{r}
+```{r Comparable and concordant pairs info}
 pairs <- list()
-
-expm_entries_3 <- list()
 
 for (l in seq_along(results_per_lambda)) {
 
-  list_exp3 <- results_per_lambda[[l]][[1]]
+  list_rmst <- results_per_lambda[[l]][[1]]
 
   lambda <- factors[[l]]
 
-  raw_exp3 <- extract_expm_pairs(list_exp3, lambda,  extract = extract)
+  raw_rmst <- extract_rmst_pairs(list_rmst, lambda)
 
-  pairs[[l]] <- raw_exp3
+  pairs[[l]] <- raw_rmst
 
 }
 
@@ -644,12 +801,7 @@ df_pairs$survival.n.Concordant <- df_pairs$survival.n.CP
 ```
 
 
-```{r, fig.width=8, fig.height=7}
-library(tidyverse)
-library(patchwork)
-# Example: Assume df_pairs has these columns:
-# factor.cens, dataset, survival.n.G2.CompPairs, survival.n.G2.CP, survival.n.CompPairs, survival.n.CP
-
+```{r Ploting comparable concordant, fig.width=8, fig.height=10}
 # Reshape to long format
 df_long <- df_pairs[,
   c("survival.n.G2.Concordant", "survival.n.G2.Comparable", 
@@ -680,313 +832,59 @@ df_long$Group <- factor(df_long$Group, levels = c(
   "survival.n/G2"
 ))
 
-df_long$cp_value <- cp_list[match(df_long$lambda, factors)]
-# First plot
-p1 <- ggplot(df_long, aes(x = as.factor(cp_value), y = Value, fill = PairType)) +
-  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
-  facet_wrap(~Group, scales = "free") +
-  scale_fill_manual(values = c("Comparable" = "grey80", "Concordant" = "grey20")) +
-  labs(x = "", y = "Number of pairs") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+#df_long$cp_value <- cp_list[match(df_long$lambda, factors)]
 
-# Second plot
-p2 <- ggplot(final_df[((final_df$Notation == "C_tau" | final_df$Notation == "C") & 
-                         (final_df$Metric == "survival.n" | final_df$Metric == "survival.n/G2")),],  
-             aes(x = as.factor(cp_value), y = Cindex)) +
-  geom_violin(alpha = 0.4, color = "black") +
-  #geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
-  facet_wrap(~ Metric) +
-  labs( y = "C-index",
+facet_common <- facet_wrap(~Implementation + Measure, labeller = label_parsed)
+
+dat <- final_df[(final_df$Metric %in% c("survival.n", "survival.n/G2") & 
+                   (final_df$Measure %in% "tilde(C)[tau]~(RMST~tau==max*(T:~Delta==1))")),]
+
+
+lambda_label_map <- dat[, c("Lambda", "CP_Label")] |> 
+  distinct() |> 
+  rename(lambda_numeric = Lambda)
+
+p2 <- ggplot(dat,
+       aes(x = CP_Label, y = Cindex, fill = Notation)) +
+  stat_summary(fun = median, geom = "point", shape = 21, 
+               size = 2, fill = "black", color = "black", 
+               position = position_dodge(width = 0.9)) +
+  geom_violin(alpha = 0.2, color = "black") +
+  facet_wrap(~Implementation + Measure, labeller = label_parsed) +
+  ylim(0.45, 0.75) + 
+  scale_fill_discrete(labels = scales::parse_format()) +  # enables LaTeX-style legend
+  labs(
+       y = "C-index",
        x = "Censoring percentage",
        fill = "Input Type") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme_minimal(base_size = 12)  +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
 
-# Combine vertically
-p1 / p2
+
+# Add CP_Label to df_long
+df_long <- df_long |>
+  left_join(lambda_label_map, by = c("lambda" = "lambda_numeric"))
+df_long$Measure <- "tilde(C)[tau]~(RMST~tau==max*(T:~Delta==1))"
+
+p1 <- ggplot(df_long, aes(x = CP_Label, y = Value, color = PairType)) +
+  geom_boxplot(alpha = 0.3, fill = "white", outlier.shape = NA, size = 0.7) +
+  facet_wrap(~ Group + Measure, labeller = label_parsed) +
+  scale_color_manual(
+    values = c("Comparable" = "#377EB8",   # blue
+               "Concordant" = "#E41A1C"),  # red
+    labels = c("Comparable" = "Weighted Sum Comparable",
+               "Concordant" = "Weighted Sum Concordant")
+  ) +
+  labs(x = "", y = "Number of pairs", color = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
+
+p2
+
+p1
 ```
-
-
-
-
-```{r}
-ggplot(final_df[(final_df$Notation == "C_td"),],  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
-  geom_violin(alpha = 0.4, color = "black") +
-  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
-  facet_wrap(~Metric)
-  labs(title = "Model Performance per Lambda",
-       y = "C-index",
-       x = "Lambda",
-       fill = "Input Type") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  
-```
-```{r}
-final_df %>%
-  filter(Notation == "C_td") %>%
-  group_by(Lambda, Metric) %>%
-  summarise(n = n(), .groups = "drop")
-
-```
-
-
-
-
-```{r}
-
-ggplot(final_df[final_df$InputType == "Exp.Mort",],  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
-  geom_violin(alpha = 0.4, color = "black") +
-  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
-  facet_wrap(~Metric)
-  labs(title = "Model Performance per Lambda",
-       y = "C-index",
-       x = "Lambda",
-       fill = "Input Type") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  
-ggplot(final_df[final_df$InputType == "Exp.Mort",],  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
-  geom_violin(alpha = 0.4, color = "black") +
-  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
-  labs(title = "Expected Mortality Cox PH across lambda adjustment values",
-       y = "C-index",
-       x = "Lambda",
-       fill = "Implementation") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-```
-```{r}
-
-final_df$Notation <- ifelse(
-  final_df$Metric %in% c("Hmisc::rcorr.cens", 
-                         "pysurvival", "SurvMetrics::Cindex",
-                         "lifelines", "sksurv.censored"),
-  "C",
-  final_df$Notation
-)
-
-
-ggplot(final_df[final_df$InputType == "Exp.Mort",],  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
-  facet_wrap(~ Notation) +
-  geom_violin(alpha = 0.4, color = "black") +
-  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
-  labs(title = "Expected Mortality Cox PH across lambda adjustment values",
-       y = "C-index",
-       x = "Lambda",
-       fill = "Implementation") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
-
-```{r}
-final_df$ipcw <- ifelse(
-  final_df$Metric %in% c("Hmisc::rcorr.cens", 
-                         "survival.n", "SurvMetrics::Cindex",
-                         "lifelines", "sksurv.censored"),
-  "unweighted",
-  "weighted"
-)
-
-
-ggplot(final_df[final_df$InputType == "Exp.Mort",],  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
-  facet_wrap(~ ipcw) +
-  geom_violin(alpha = 0.4, color = "black") +
-  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
-  labs(title = "Expected Mortality Cox PH across lambda adjustment values",
-       y = "C-index",
-       x = "Lambda",
-       fill = "Implementation") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
-
-
-
-```{r}
-ggplot(final_df,  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
-  geom_violin(alpha = 0.4, color = "black") +
-  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
-  facet_wrap(~InputType)
-  labs(title = "Model Performance per Lambda",
-       y = "C-index",
-       x = "Lambda",
-       fill = "Input Type") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
-```{r}
-ggplot(final_df[final_df$Lambda == 7,],  aes(x = as.factor(Lambda), y = Cindex, fill = Metric)) +
-  geom_violin(alpha = 0.4, color = "black") +
-  geom_errorbar(aes(ymin = Lower, ymax = Upper), position = position_dodge(width = 0.9), width = 0.25) +
-  facet_wrap(~InputType)
-  labs(title = "Model Performance per Lambda",
-       y = "C-index",
-       x = "Lambda",
-       fill = "Input Type") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
-
-
-#### Need to test antolinis in R too: 
-
-
-Select a dataset with high degree of censoring: 
-
-
-```{r}
-set.seed(123)
-
-n_bootstraps <- 100
-
-model_names <- "CoxPH" 
-
-subset <- stacked_predictions[[5]]
-
-results_surv_Km <- vector("list", length = 10)
-
-for (dataset in seq_along(subset)) {
-  
-  dataset_size <- nrow(subset[[dataset]])
-      # Get lambda 
-  lambda = unique(subset[[dataset]]$lambda)
-  # Create bootstrap samples
-  resample_indices <- replicate(n_bootstraps, 
-                                  sample(subset[[dataset]]$patients_ids, 
-                                         size = dataset_size, replace = TRUE), 
-                                  simplify = FALSE)
-  # When eval is at max uncensored time
-  # Create empty lists
-  subset_surv <- list()
-
-  # Boostrapping
-  for (r in seq_along(resample_indices)){
-    subset_surv[[r]] <- get_model_preds2(stacked_predictions = subset[[dataset]], 
-                model_names = "CoxPH",
-                input_type = "Distribution",
-                bootstrap_patient_ids = resample_indices[[r]])
-  }
-    
-  for (model in model_names) {
-    # Antolinis
-    cat("Calculating bootstrap for Distribution for Model = ", model, "\n")
-    results_surv_Km[[dataset]][[model]] <-  bootstrap.metric(metrics.wrapper,
-                                    dataset=list(
-                                       predicted = model,
-                                       censoring = "test_status",
-                                       time = "test_time"),
-                                    implementation = list("pycox.Ant", "pycox.Adj.Ant"),
-                                    sampled_data = subset_surv)
-  }
-}
-```
-
-```{r}
-
-pycoxR_SurvMatrix_Ant <- function(time, surv_matrix, censoring){
-  ### As difference from the previous one, this function calculates
-  ### c-index across all times 
-
-  np <- import("numpy", convert = FALSE)  
-  pd <- import("pandas", convert = FALSE)
-  EvalSurv <- import("pycox.evaluation", convert = FALSE)$EvalSurv
-  
-  # Convert R to python with correct float or int
-  time_py <- np$array(as.numeric(time), dtype = "float64")  
-  #time_py <- np$round(time_py, as.integer(2))
-  #time_py <- np$array(as.numeric(time_py), dtype = "float64")  
-  censoring_py <- np$array(as.integer(censoring), dtype = "int32")
-  # Transpose the survival matrix
-  surv_mat <- t(as.matrix(surv_matrix))  # now: rows = times, cols = patients
-  
-  # Convert to numpy
-  surv_np <- np$array(surv_mat, dtype = "float64")
-
-  # Time index 
-  time_index <- np$array(as.numeric(colnames(surv_matrix)), dtype = "float64")
-  
-  # Create pandas dataframe
-  surv_df <- pd$DataFrame(data = surv_np, index = time_index)
-
-  ev <- EvalSurv(surv_df, time_py, censoring_py)
-  
-  py_to_r(ev$concordance_td(method = "antolini"))
-}
-
-pycoxR_SurvMatrix_AdjAnt <- function(time, surv_matrix, censoring){
-  ### As difference from the previous one, this function calculates
-  ### c-index across all times 
-  np <- import("numpy", convert = FALSE)  
-  pd <- import("pandas", convert = FALSE)
-  EvalSurv <- import("pycox.evaluation", convert = FALSE)$EvalSurv
-  
-  # Convert R to python with correct float or int
-  time_py <- np$array(as.numeric(time), dtype = "float64")  
-  censoring_py <- np$array(as.integer(censoring), dtype = "int32")
-  # Transpose the survival matrix
-  surv_mat <- t(as.matrix(surv_matrix))  # now: rows = times, cols = patients
-  
-  # Convert to numpy
-  surv_np <- np$array(surv_mat, dtype = "float64")
-  
-  # Time index 
-  time_index <- np$array(as.numeric(colnames(surv_matrix)), dtype = "float64")
-  
-  # Create pandas dataframe
-  surv_df <- pd$DataFrame(data = surv_np, index = time_index)
-  
-  ev <- EvalSurv(surv_df, time_py, censoring_py)
-  
-  py_to_r(ev$concordance_td(method = "adj_antolini"))
-}
-
-set.seed(123)
-
-n_bootstraps <- 100
-
-model_names <- "CoxPH" 
-
-subset <- stacked_predictions[[5]]
-
-results_surv_noKm <- vector("list", length = 10)
-
-for (dataset in seq_along(subset)) {
-  
-  dataset_size <- nrow(subset[[dataset]])
-      # Get lambda 
-  lambda = unique(subset[[dataset]]$lambda)
-  # Create bootstrap samples
-  resample_indices <- replicate(n_bootstraps, 
-                                  sample(subset[[dataset]]$patients_ids, 
-                                         size = dataset_size, replace = TRUE), 
-                                  simplify = FALSE)
-  # When eval is at max uncensored time
-  # Create empty lists
-  subset_surv <- list()
-
-  # Boostrapping
-  for (r in seq_along(resample_indices)){
-    subset_surv[[r]] <- get_model_preds2(stacked_predictions = subset[[dataset]], 
-                model_names = "CoxPH",
-                input_type = "Distribution",
-                bootstrap_patient_ids = resample_indices[[r]])
-  }
-    
-  for (model in model_names) {
-    # Antolinis
-    cat("Calculating bootstrap for Distribution for Model = ", model, "\n")
-    results_surv_noKm[[dataset]][[model]] <-  bootstrap.metric(metrics.wrapper,
-                                    dataset=list(
-                                       predicted = model,
-                                       censoring = "test_status",
-                                       time = "test_time"),
-                                    implementation = list("pycox.Ant", "pycox.Adj.Ant"),
-                                    sampled_data = subset_surv)
-  }
-}
-```
-
 
