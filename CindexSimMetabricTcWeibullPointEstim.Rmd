@@ -308,8 +308,10 @@ for (i in seq_along(datasets)){
 
 ### C-index point estimates
 
-```{r Load results checkpoint}
-#results_per_lambda <- readRDS("./Results/WeibullSynthetic.rds")
+Do not run this one if the previous code was run. 
+
+```{r Load results checkpoint, eval=FALSE}
+results_per_lambda <- readRDS("./Results/WeibullSynthetic.rds")
 datasets_per_lambda <- 100
 factors <- c(0, 0.5, 1.5, 3, 7, 13)
 ```
@@ -317,7 +319,7 @@ factors <- c(0, 0.5, 1.5, 3, 7, 13)
 Here we will focus only in point estimates (we do not perform bootstrap). 
 
 
-```{r C-index Point estimates, eval=FALSE}
+```{r C-index Point estimates}
 
 results_rmst_point_estim <- vector("list", length = datasets_per_lambda)
 results_rmst_point_estim2 <- vector("list", length = datasets_per_lambda)
@@ -444,7 +446,7 @@ for (l in seq_along(stacked_predictions)) {
 
 
 
-### Plot results
+#### Plo
 
 ```{r Calculate the censoring percentages}
 
@@ -608,9 +610,14 @@ ggplot(final_df,
 ```
 
 
-```{r Plot with oracle fig.width=8, fig.height=9}
+```{r Plot with oracle, fig.width=8 fig.height=9}
 
-dat_plot <- final_df
+dat_plot <- final_df[(final_df$Metric %in% c("Hmisc::rcorr.cens", "pec::cindex", "pycox.Ant")),]
+
+dat_plot <- dat_plot %>% 
+  filter(!(Implementation == "Hmisc" & 
+             Measure == "tilde(C)[tau]~(RMST~tau==100~months)"))
+
 oracle_means <- dat_plot |>
   filter(Model == "Oracle") |>
   group_by(Implementation, Measure) |>
@@ -654,7 +661,7 @@ ggplot(dat_plot[dat_plot$Model == "CoxPH", ],
 
 ```
 
-```{r Plot subset fig.width=8, fig.height=9}
+```{r Plot subset, fig.width=8, fig.height=9}
 
 final_df <- final_df[final_df$Model == "CoxPH", ]
 
