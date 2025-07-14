@@ -446,7 +446,7 @@ for (l in seq_along(stacked_predictions)) {
 
 
 
-#### Plo
+#### Plot
 
 ```{r Calculate the censoring percentages}
 
@@ -585,8 +585,6 @@ imp_map <- data.frame(
 
 final_df <- merge(final_df, imp_map, by = "Metric", all.x = TRUE)
 
-
-#saveRDS(final_df, "./Results/SyntheticObjects/10d_c_ind_results_processed_TcW_123.rds")
 ```
 
 
