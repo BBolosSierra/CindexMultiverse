@@ -40,6 +40,7 @@ library(furrr)
 library(pysurvivalR)
 library(survivalmodels)
 library(tidyr)
+library(knitr)
 ```
 
 
@@ -467,7 +468,7 @@ rmst_pec_excl_ties_T2$Rounding   <- "Round(T,0)"
 rmst_pec_incl_ties_T2$Rounding  <- "Round(T,0)"
 
 # Bind by row
-df_plot <- bind_rows(surv_df_plot, rmst_pec_excl_ties, rmst_pec_incl_ties, 
+df_plot <- bind_rows(surv_df_plot, rmst_pec_excl_ties, rmst_pec_incl_ties,
                      surv_df_plot_T2, rmst_pec_excl_ties_T2, rmst_pec_incl_ties_T2)
 
 ```
@@ -515,22 +516,17 @@ n_metrics <- length(metric_levels)
 
 surv_df_plot$Incl.Ties.Times    <- ifelse(surv_df_plot$Metric == "pycox.Adj.Ant", 
                                           TRUE, FALSE)
-surv_df_plot_TT$Incl.Ties.Times <- ifelse(surv_df_plot_TT$Metric == "pycox.Adj.Ant", 
-                                          TRUE, FALSE)
 surv_df_plot_T2$Incl.Ties.Times <- ifelse(surv_df_plot_T2$Metric == "pycox.Adj.Ant", 
                                           TRUE, FALSE)
 
 rmst_pec_incl_ties$Incl.Ties.Times     <- TRUE
-rmst_pec_incl_ties_TT$Incl.Ties.Times  <- TRUE
 rmst_pec_incl_ties_T2$Incl.Ties.Times  <- TRUE
 
 rmst_pec_excl_ties$Incl.Ties.Times     <- FALSE
-rmst_pec_excl_ties_TT$Incl.Ties.Times  <- FALSE
 rmst_pec_excl_ties_T2$Incl.Ties.Times  <- FALSE
 
 
 df_plot <- bind_rows(surv_df_plot, rmst_pec_excl_ties, rmst_pec_incl_ties, 
-                     surv_df_plot_TT, rmst_pec_excl_ties_TT, rmst_pec_incl_ties_TT,
                      surv_df_plot_T2, rmst_pec_excl_ties_T2, rmst_pec_incl_ties_T2)
 
 # Filter rows
@@ -549,7 +545,7 @@ subset_latex <- subset_latex[order(subset_latex$Notation,
                                    subset_latex$Rounding,
                                    subset_latex$Incl.Ties.Times), ]
 
- as_latex <- subset_latex %>%
+as_latex <- subset_latex %>%
    kable(format = "latex", booktabs = TRUE)
 ```
 
