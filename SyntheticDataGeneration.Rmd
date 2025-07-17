@@ -9,7 +9,7 @@ date: "2025-02-27"
 
 Load libraries
 
-```{r, include=FALSE}
+```{r Load libraries, include=FALSE}
 # Survival metrics
 library(reticulate)
 library(arrow)
@@ -37,21 +37,7 @@ library(pysurvivalR)
 library(survivalmodels)
 ```
 
-
-```{r}
-#conda create -n py-rstudio python=3.10
-#conda activate py-rstudio
-#conda config --add channels conda-forge
-#conda config --set channel_priority strict
-#conda install numpy
-#conda install pycox
-#conda install lifelines
-#conda install numba
-#conda install furrr
-```
-
-
-```{r setup, include=FALSE}
+```{r Setup, include=FALSE}
 #Sys.unsetenv("RETICULATE_PYTHON")
 Sys.setenv(OMP_NUM_THREADS = "1")       # Limits OpenMP to 1 thread
 Sys.setenv(NUMBA_NUM_THREADS = "1")     # Limits Numba to 1 thread
@@ -101,36 +87,23 @@ Then the ratio of times for a covariate with value $z_1$ versus values $z_0$, wi
 The $p$th percentile of the (covariate-adjusted) Weibull distribution occurs at 
 $$t_p = \left[ \frac{-\log p}{\lambda e^{\boldsymbol{\beta}^T \mathbf{z}}} \right]^{1/\gamma}.$$
 
-```{r}
-# Dataset from Deep Surv, also used in DeSurv:
-h5_test <- h5read("./Datasets/metabric_IHC4_clinical_train_test.h5", 
-                  name="test")
+To estimate the oracle, we need the survival probabilities per patient, per dataset: 
 
-h5_train <- h5read("./Datasets/metabric_IHC4_clinical_train_test.h5",
-                   name="train")
+$$S(t|z) = e^{-\lambda t^{\gamma} e^{\beta^{T}z}}$$
 
-# Make a dataset for training:
-train <- data.frame(t(h5_train$x))
-train$status <- h5_train$e
-train$time <- h5_train$t
+Where parameters estimated during the data generation such $gamma$ and $lambda$ are required. Therefore, they are stored during synthetic data generation.
 
-# Make a dataset for test:
-test<- data.frame(t(h5_test$x))
-test$status <- h5_test$e
-test$time <- h5_test$t
+The 100 datasets are generated with the same survreg model. However, we are sampling 1000 patients, and therefore, we do have different covariates per dataset and event times. It is archived by varying the seed, and it is reproducible since all seeds are stored. The observed event times are calculated by including increasing levels of censoring. 
+For one dataset, we would have 5 versions of it, with increasing levels of censoring. 
 
-# Order
-test <- test[order(test$time, -test$status),]
-train <- train[order(train$time, -train$status),]
-test$time <- test$time + 1e-8
-train$time <- train$time + 1e-8
+Since one dataset has the same original event times (although different observed times due to censoring), model parameters are kept throughout the process of increasing censoring, regardless of censoring mechanism generation.
 
-mb <- rbind(train, test) # for crossvalidation settings
-```
 
-```{r}
+
+```{r Load datasets}
 # read the processed file
-mb <- read.table("./Datasets/metabric_preprocess_multiverse.csv", sep="," , header = TRUE)
+mb <- read.table("./Datasets/metabric_preprocess_multiverse.csv", 
+                 sep = "," , header = TRUE)
 
 # Keep the id as index
 rownames(mb) <- mb$PATIENT_ID
@@ -138,29 +111,38 @@ rownames(mb) <- mb$PATIENT_ID
 # Remove the id column
 mb <- mb[,2:12]
 
-# Sote the previous colnames to keep track of them
-cols <- colnames(mb)
+# Mapping
+var_map <- c(
+  "MKI67" = "X1",
+  "EGFR" = "X2",
+  "ERBB2" = "X3",
+  "PGR" = "X4",
+  "HORMONE_THERAPY" = "X5",
+  "RADIO_THERAPY" = "X6",
+  "CHEMOTHERAPY" = "X7",
+  "ER_IHC" = "X8",
+  "AGE_AT_DIAGNOSIS" = "X9",
+  "OS_MONTHS" = "time",
+  "OS_STATUS" = "status"
+)
 
-# Asign new column names
-newcols <- c("X1", "X2", "X3", "X4","X5", "X6", "X7", "X8", "X9", "time", "status")
-colnames(mb) <- newcols
+# Mapping colnames
+names(mb)[names(mb) %in% names(var_map)] <- var_map[names(mb)[names(mb) %in% names(var_map)]]
 
-# NO NEED OF SUMING, there is no 0s... 
-min(mb$time)
-#mb$time <- mb$time + 1e-8
 
 # Order according to time and status
 mb[order(mb$time, -mb$status),]
 
-
 ```
 
 
-```{r}
+```{r Load functions}
 source("./CindexHelperFunctions.R")
 ```
 
-```{r}
+Survreg models with Weibull AFT parametrization are fit to the metabric data:
+
+```{r Define models}
 # censoring times
 survreg_model_c <- survreg(Surv(mb[mb$status == 0,]$time) ~ 1, dist="weibull")
 
@@ -175,14 +157,14 @@ survreg_model <- survreg(Surv(time, status) ~ X1 + X2 + X3 +
 #survreg_model <- survreg(Surv(time, status) ~ X1 + X2 + X3 +
 #                                   X4 + X5 + X6 + X7 + X8 + X9,
 #                                data = mb, dist="weibull")
-
-
 ```
 
-Geneate synthetic event times
 
+#### Testing events generation:
 
-```{r}
+Generate synthetic event times with the built in function:
+
+```{r Generate event times}
 test <- generate_synthetic_event_times(survreg_model = survreg_model,
                                n = 1000, 
                                covariates = mb[, c("X1", "X2", "X3", "X4", 
@@ -190,14 +172,14 @@ test <- generate_synthetic_event_times(survreg_model = survreg_model,
                                seed = 123,
                                verbose = FALSE)
 
-```
 
-
-```{r}
 hist(test$time, breaks = 100)
 ```
 
-```{r}
+To the generated data, we include censoring to calculate the observed event times and the final status. 
+
+```{r Add censoring based on Weibull}
+
 test_Wtc <- add_censoring(my_surv_data = test, 
                           cens.type = "weibull", 
                           cens.params = list(
@@ -224,60 +206,31 @@ ggplot(df_hist, aes(x = value, fill = group)) +
 
 
 ```
-```{r}
-survreg_model_c <- survreg(Surv(time, !status) ~ I(X9 < threshold),
+
+To the same test data, we can add censoring based on other mechanisms, such informed Weibull:
+
+```{r Add censoring based on age-informed Weibull}
+
+survreg_model_inform <- survreg(Surv(time, !status) ~ X9,
                            dist="weibull",
                            data = mb[mb$status == 0,])
 
-threshold <- median(mb$X9)
-
-survreg_low <- survreg(Surv(time, !status) ~ 1, 
-                       data = mb[mb$X9 < threshold, ], dist = "weibull")
-
-survreg_high <- survreg(Surv(time, !status) ~ 1, 
-                        data = mb[mb$X9 >= threshold, ], dist = "weibull")
-
-
 test_Itc <- add_censoring(
   my_surv_data = test,
-  cens.type = "informative2",
+  cens.type = "informative",
   cens.params = list(
-    weibull_cens_model_low = survreg_low,
-    weibull_cens_model_high = survreg_high,
-    covariates = test[, c("X9")]
+    weibull_cens_model = survreg_model_inform,
+    covariates = test[, c("X9")], 
+    lambda_c_factor = 1,
+    cens_limit_admin = 300
   ),
   seed = 123
 )
-```
 
-
-Another way of adding the informative censoring:
-
-```{r}
-
-# informative censoring times
-survreg_model_inform <- survreg(Surv(time, !status) ~  
-                                 X6 + X7 + X9, ## rounded otherwise no converge
-                                data = mb, dist="weibull")
-# 
-# survreg_model_inform <- survreg(Surv(time, !status) ~  
-#                                  X6 + X7 + X9, ## rounded otherwise no converge
-#                                 data = mb, dist="weibull")
-
-
-
-test_Itc <- add_censoring(my_surv_data = test, 
-                          cens.type = "informative", 
-                          cens.params = list(
-                            weibull_cens_model = survreg_model_inform,
-                            lambda_c_factor = 1,
-                            covariates = test[, c(
-                          "X6", "X7", "X9")]
-                          ), seed=123)
 
 # Combine into a dataframe
 df_hist <- data.frame(
-  value = c(test_Wtc$time, test_Wtc$censoring_time, test_Wtc$observed_time),
+  value = c(test_Itc$time, test_Itc$censoring_time, test_Itc$observed_time),
   group = rep(c("Event time", "Censoring time", "Observed time"), each = 1000)
 )
 
@@ -286,23 +239,22 @@ ggplot(df_hist, aes(x = value, fill = group)) +
   geom_histogram(alpha = 0.3, position = "identity", bins = 30, color = "black") +
   scale_fill_manual(values = c("steelblue", "darkorange", "darkgreen")) +
   theme_minimal() +
-  labs(title = "Weibull Proportinal Hazards Informative Censoring  \n (Age, Radiotherapy and Chemotherapy)",
+  labs(title = "Weibull Proportinal Hazards Informative Age",
        x = "Value",
        y = "Frequency",
        fill = "Dataset")
 
-
 ```
 
 
+Another way of adding censoring is based on Uniform (commonly used):
 
-```{r}
+
+```{r Add censoring based on Uniform}
 test_Utc <- add_censoring(my_surv_data = test, 
                           cens.type = "uniform", 
                           cens.params = list(
                             #cens_limit_admin = max(mb$time),
-                            #min_cens_unif = NULL, # used only for uniform cens
-                            #max_cens_unif = NULL, # used only for uniform cens
                             cens_increase_unif = 0  # used only for uniform cens
                           ), seed=123)
 
@@ -322,57 +274,50 @@ ggplot(df_hist, aes(x = value, fill = group)) +
        y = "Frequency",
        fill = "Dataset")
 
-
-
 ```
 
 
+#### Generate 100 datasets with increasing levels of censoring
 
-```{r, eval=FALSE}
-# censoring times
+```{r Generate 100 datasets of 1000 patients, eval=FALSE}
+# censoring weibull times model
 survreg_model_c <- survreg(Surv(mb[mb$status == 0,]$time) ~ 1, dist="weibull")
-# survreg_model_c <- survreg(Surv(time, !status) ~ 1, 
-#                            data=mb, dist="weibull")
 
-# survival times
+# survival event times model
 survreg_model <- survreg(Surv(time, status) ~ X1 + X2 + X3 +
                                    X4 + X5 + X6 + X7 + X8 + X9,
                                 data = mb[mb$status == 1,], dist="weibull")
 
-# survreg_model <- survreg(Surv(time, status) ~ X1 + X2 + X3 + 
-#                                    X4 + X5 + X6 + X7 + X8 + X9, 
-#                                 data = mb, dist="weibull")
-
 # informative censoring times
-inform_covs <- c("X6", "X7", "X9")
-# survreg_model_inform <- survreg(Surv(time, status) ~  
-#                                  X6 + X7 + X9, 
-#                                 data = mb[mb$status == 0,], dist="weibull")
-
-survreg_model_inform <- survreg(Surv(time, !status) ~  
-                                 X6 + X7 + X9, ## rounded otherwise no converge
-                                data = mb, dist="weibull")
-
+inform_covs <- c("X9")
+survreg_model_inform <- survreg(Surv(time, !status) ~ X9,
+                           dist="weibull",
+                           data = mb[mb$status == 0,])
 # Set up increments
-factors <- c(0, 0.5, 1.5, 3, 7)
-censoring_increm <- seq(0, 0.4, 0.1)
+factors <- c(0, 0.5, 1.5, 3, 7, 13)
+censoring_increm <- seq(0, 0.5, 0.1)
 
 datasets_weibull <- vector("list", length(factors))  
 datasets_uniform <- vector("list", length(censoring_increm))
 datasets_inform <- vector("list", length(factors))
 # Loop through each censoring factor and generate datasets
-for (i in seq_along(factors)) {
-  for (j in seq_len(10)) {
-    seed = sample(1:1e6, 1)
-    cat("Seed: ", seed, "\n ")
-    # Run the function with different lambda_c_factor values
-    dat <- generate_synthetic_event_times(survreg_model = survreg_model,
-                               n = 1000, 
-                               covariates = mb[, c("X1", "X2", "X3", 
-                                                   "X4","X5","X6", 
-                                                   "X7", "X8", "X9")],
-                               seed = 123,
+for (j in seq_len(100)) {
+  seed = sample(1:1e6, 1)
+  #seed = seed_list[[1]][[j]] # predefined seed. 
+  
+  # Run the function with different lambda_c_factor values
+  dat <- generate_synthetic_event_times(survreg_model = survreg_model,
+                             n = 1000, 
+                             covariates = mb[, c("X1", "X2", "X3", 
+                                                 "X4","X5","X6", 
+                                                 "X7", "X8", "X9")],
+                             seed = seed,
                                verbose = FALSE)
+  
+  for (i in seq_along(factors)) {
+    
+    cat("Seed: ", seed, "\n ")
+
     
     cat("Weibull censoring \n")
     ## Create weibull
@@ -382,14 +327,21 @@ for (i in seq_along(factors)) {
                             weibull_cens_model = survreg_model_c, 
                             lambda_c_factor = factors[[i]]
                           ),
-                          seed = 123)
+                          seed = seed)
     
     cp <- sum(datasets_weibull[[i]][[j]]$status == 0) /
       nrow(datasets_weibull[[i]][[j]]) * 100
     
-    attr(datasets_weibull[[i]][[j]], "seed") <- seed
-    attr(datasets_weibull[[i]][[j]], "lambda") <- factors[[i]]
-    attr(datasets_weibull[[i]][[j]], "cp") <- cp
+    attr(datasets_weibull[[i]][[j]], "seed")    <- seed
+    attr(datasets_weibull[[i]][[j]], "lambda")  <- factors[[i]]
+    attr(datasets_weibull[[i]][[j]], "cp")      <- cp
+    attr(datasets_weibull[[i]][[j]], "lambda0") <- attributes(dat)$lambda0
+    attr(datasets_weibull[[i]][[j]], "gamma")   <- attributes(dat)$gamma
+    attr(datasets_weibull[[i]][[j]], "beta")    <- attributes(dat)$beta
+    attr(datasets_weibull[[i]][[j]], "seed")    <- attributes(dat)$seed
+    attr(datasets_weibull[[i]][[j]], "mu")      <- attributes(dat)$mu
+    attr(datasets_weibull[[i]][[j]], "sigma")   <- attributes(dat)$sigma
+    attr(datasets_weibull[[i]][[j]], "alpha")   <- attributes(dat)$alpha
     
     cat("Lambda: ", factors[[i]], " % Censoring: ", cp, "\n")
     
@@ -403,7 +355,7 @@ for (i in seq_along(factors)) {
                             lambda_c_factor = factors[[i]],
                             covariates = dat[, inform_covs]
                           ),
-                          seed = 123)
+                          seed = seed)
     
     cp <- sum(datasets_inform[[i]][[j]]$status == 0) /
       nrow(datasets_inform[[i]][[j]]) * 100
@@ -411,6 +363,13 @@ for (i in seq_along(factors)) {
     attr(datasets_inform[[i]][[j]], "seed") <- seed
     attr(datasets_inform[[i]][[j]], "lambda") <- factors[[i]]
     attr(datasets_inform[[i]][[j]], "cp") <- cp
+    attr(datasets_weibull[[i]][[j]], "lambda0") <- attributes(dat)$lambda0
+    attr(datasets_weibull[[i]][[j]], "gamma")   <- attributes(dat)$gamma
+    attr(datasets_weibull[[i]][[j]], "beta")    <- attributes(dat)$beta
+    attr(datasets_weibull[[i]][[j]], "seed")    <- attributes(dat)$seed
+    attr(datasets_weibull[[i]][[j]], "mu")      <- attributes(dat)$mu
+    attr(datasets_weibull[[i]][[j]], "sigma")   <- attributes(dat)$sigma
+    attr(datasets_weibull[[i]][[j]], "alpha")   <- attributes(dat)$alpha
     
     cat("Lambda: ", factors[[i]], " % Censoring: ", cp, "\n")
     
@@ -421,13 +380,20 @@ for (i in seq_along(factors)) {
                           cens.params = list(
                             cens_increase_unif = censoring_increm[[i]]
                           ),
-                          seed = 123)
+                          seed = seed)
     cp <- sum(datasets_uniform[[i]][[j]]$status == 0) /
       nrow(datasets_uniform[[i]][[j]]) * 100
 
     attr(datasets_uniform[[i]][[j]], "seed") <- seed
     attr(datasets_uniform[[i]][[j]], "incre") <- censoring_increm[[i]]
     attr(datasets_uniform[[i]][[j]], "cp") <- cp
+    attr(datasets_weibull[[i]][[j]], "lambda0") <- attributes(dat)$lambda0
+    attr(datasets_weibull[[i]][[j]], "gamma")   <- attributes(dat)$gamma
+    attr(datasets_weibull[[i]][[j]], "beta")    <- attributes(dat)$beta
+    attr(datasets_weibull[[i]][[j]], "seed")    <- attributes(dat)$seed
+    attr(datasets_weibull[[i]][[j]], "mu")      <- attributes(dat)$mu
+    attr(datasets_weibull[[i]][[j]], "sigma")   <- attributes(dat)$sigma
+    attr(datasets_weibull[[i]][[j]], "alpha")   <- attributes(dat)$alpha
     
     cat("Increment: ", censoring_increm[[i]], " % Censoring: ", cp, "\n")
     
@@ -439,7 +405,7 @@ for (i in seq_along(factors)) {
 
 ```
 
-```{r, eval=FALSE}
+```{r Save dataset in a structured way, eval=FALSE}
 
 # Save datasets along with attributes in a structured list
 structured_datasets_weibull <- list(
@@ -469,11 +435,36 @@ structured_datasets_inform <- list(
     })
   })
 )
+
 # Save the structured list as RDS
-# saveRDS(structured_datasets_weibull, "./Datasets/Synthetic/10d_synthetic_WT_WTc.rds")
-# saveRDS(structured_datasets_uniform, "./Datasets/Synthetic/10d_synthetic_WT_UTc.rds")
-#saveRDS(structured_datasets_inform, "./Datasets/Synthetic/10d_synthetic_WT_ITc.rds")
+saveRDS(structured_datasets_weibull, "./Datasets/Synthetic/10d_synthetic_WT_WTc.rds")
+saveRDS(structured_datasets_uniform, "./Datasets/Synthetic/10d_synthetic_WT_UTc.rds")
+saveRDS(structured_datasets_inform, "./Datasets/Synthetic/10d_synthetic_WT_ITc.rds")
 
 ```
 
 
+To get the list of seeds used to generate stored datasets: 
+
+```{r load simulated datasets}
+# Load the synthetic datasets and restore attributes
+datasets <- load_synthetic_datasets("./Datasets/Synthetic/10d_synthetic_WT_WTc.rds")
+
+datasets_per_lambda <- 100
+factors <- c(0, 0.5, 1.5, 3, 7, 13)
+```
+
+
+```{r Seed list}
+seed_list <- vector("list", length(factors))
+for (i in seq_along(datasets)){
+  for (j in seq_along(datasets[[i]])) {
+    # Extract data set
+    dat <- data.frame(datasets[[i]][[j]])
+    attributes(dat) <- attributes(datasets[[i]][[j]])
+    print(attributes(dat)$seed)
+    # Print betas
+    seed_list[[i]][[j]] <- attributes(dat)$seed
+  }
+}
+```
