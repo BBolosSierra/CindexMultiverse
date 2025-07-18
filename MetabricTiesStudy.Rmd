@@ -550,11 +550,17 @@ as_latex <- subset_latex %>%
 ```
 
 
-### Ties in predictions
+# Ties in predictions
 
 To study the ties in prediction we restart the global environment variables. 
 
-We would create three different models based on increasing discretization of the age as covariates. After we would estimate the C-index with those implementations where we can change the inclusion of ties in predictions based on user-defined parameters. Those are pysurvival and Hmisc for $C$, pec for $C_\tau$ and pycox for $C_\{td}$
+We would create three different models based on increasing discretization of 
+the age as covariates. After we would estimate the C-index with those 
+implementations where we can change the inclusion of ties in predictions based 
+on user-defined parameters. Those are pysurvival and Hmisc for $C$, pec for 
+$C_\tau$ and pycox for $C_\{td}$
+
+Here, we restart the environment and load the required libraries. 
 
 ```{r Restart}
 rm(list = ls())
@@ -589,6 +595,7 @@ library(survivalmodels)
 library(tidyr)
 ```
 
+We also re-load the data. 
 
 ```{r Load data}
 # Load data downloaded from the cBioPortal 
@@ -618,16 +625,17 @@ var_map <- c(
 
 # Mapping colnames
 names(mb)[names(mb) %in% names(var_map)] <- var_map[names(mb)[names(mb) %in% names(var_map)]]
-
-# Looking at the time
-summary(mb$time)
-# Order according to time and status
-mb[order(mb$time, -mb$status),]
 ```
+Next, we load the helper functions used throughout our analysis.
 
 ```{r Load functions}
 source("./CindexHelperFunctions.R")
 ```
+
+## Age rounding
+
+Here, we apply to different rounding strategies to age. First, we round the 
+age to the nearest integer, and then we create 5-year bins.
 
 ```{r Number of unique age values}
 length(unique(mb$X9))
@@ -645,10 +653,13 @@ mb$X9_bin <- cut(
   right = FALSE,
   include.lowest = TRUE
 )
-
 ```
 
+## Model fitting
 
+We will fit Cox PH models using age as the only covariate. Different models will
+be fitted using the raw values of age, as well as the two rounded age values 
+that were created in the previous section. 
 
 ```{r 5foldCV, eval=FALSE}
 ## Reproducibility
