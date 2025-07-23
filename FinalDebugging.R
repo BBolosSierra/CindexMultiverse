@@ -443,6 +443,15 @@ C1["Concordant"] # OK
 uncertainHmisc(MyC)
 C1["Uncertain"] # OK
 
+# Hmisc - exclude ties
+C1 <- rcorr.cens(-age_round, Surv(d.time, death), outx = TRUE)
+comparableHmisc(MyC) - MyC$case1.ties - MyC$case2.ties - MyC$case6.ties
+C1["Relevant Pairs"] # OK
+concordantHmisc(MyC) - MyC$concordant1.ties - MyC$concordant2.ties - MyC$concordant6.ties
+C1["Concordant"] # OK
+uncertainHmisc(MyC)
+C1["Uncertain"] # Not OK, but irrelevant for the Cindex (I just need to calculate the diff)
+
 ## SurvMetrics - OK
 C2 <- Cindex_aux(Surv(d.time, death), predicted = -age_round) 
 C2$Concordant + C2$ConcordantTies # This is half of the comparable pairs in Hmisc
