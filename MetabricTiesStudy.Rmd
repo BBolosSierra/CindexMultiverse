@@ -1,13 +1,17 @@
 ---
-title: "MetabricPointEstim2"
+title: "Sensitivity analysis for METABRIC, increasing the number of ties in times and predictions"
 output: html_document
-date: "2025-04-15"
+date: "<small>`r Sys.Date()`</small>"
 ---
 
-## Concordance index multiverse.
+# Introduction 
+Here, we perform a sensitivity analysis to assess the effect of ties on different
+C-index implementations. This is Based on the METABRIC dataset, for which the 
+number of ties (in predictions and in times) was artificially increased via 
+rounding. 
 
+In this section, we first load the required libraries:
 
-Load libraries
 
 ```{r Load libraries include=FALSE}
 # Survival metrics
@@ -20,7 +24,6 @@ library(pec)
 library(survival)
 library(rhdf5)
 library(randomForestSRC)
-library(survAUC)
 library(Hmisc)
 library(dplyr)
 # Plotting
@@ -33,9 +36,8 @@ library(foreach)
 library(MASS)
 library(flexsurv)
 library(furrr)
-library(pysurvivalR)
-library(survivalmodels)
 library(tidyr)
+library(kableExtra)
 ```
 
 
@@ -56,6 +58,8 @@ Sys.setenv(OPENBLAS_NUM_THREADS = "1")  # Limits OpenBLAS to 1 thread
 #py_config()
 ```
 
+
+Subsequently, we load the pre-processed METABRIC dataset. 
 
 ```{r load data}
 # Load data downloaded from the cBioPortal 
@@ -93,31 +97,17 @@ mb[order(mb$time, -mb$status),]
 
 ```
 
-```{r Histogram of uncensored event times}
-hist(mb[mb$status == 1,]$time, breaks = 150, 
-     xlab = "Event Times (months)", main = "Histogram of Uncensored Event Times")
-```
+Next, we load helper functions used throughout our analysis.
 
 
 ```{r load functions}
 source("./CindexHelperFunctions.R")
 ```
 
-```{r Number of patients with ties in times}
-cat("Number of patients: ", nrow(mb), "\n")
-cat("Number of unique times: ", length(unique(mb$time)), "\n")
+Finally, we load the 5-fold cross-validation results from the previous analysis,
+which contains the stacked predictions and survival curves for the METABRIC dataset.
 
-table_times <- table(mb$time)
-ties_times <- table_times[table_times > 1]
-
-length(ties_times)
-
-num_tied_pairs <- sum(choose(ties_times, 2))
-n_tied_pairs <- sum((ties_times * (ties_times - 1)) / 2)
-cat("Number of pairs that have tied times: ", num_tied_pairs, "\n")
-```
-
-```{r Load corssvalidation results}
+```{r Load crossvalidation results}
 stacked_predictions <- readRDS("./Results/5foldCV_MetabricStackedPredictions.rds")
 survival_curves     <- readRDS("./Results/5foldCV_MetabricSurvivalCurves.rds")
 ```
@@ -132,11 +122,57 @@ plot_survival_curves(survival_curves[[1]]$Coxtime, title = "Cox Time Survival Cu
 plot_survival_curves(survival_curves[[1]]$RSF, title = "RSF Survival Curves", seed=123)
 ```
 
-### Ties in times
+# Ties in times
 
-To study the effect of ties, the number of discretizations of the event times is increased. 
+The number of ties will be increased by rounding the `test_time` variable in the 
+stacked predictions. This corresponds to rounding the observed survival times 
+(censored or not) in the test set. Un-rounded values are used within the training
+set. We will use the results from the 5 fold CV, and generate bootstrap samples 
+to estimate the C-index confidence intervals. We also estimate the C-index point 
+estimates. 
 
-We will use the results from the 5foldCV, and generate bootstrap samples to estimate the C-index confidence intervals. We also estimate the C-index point estimates. 
+## Rounding and descriptive statistics
+
+First, we summarise the number of tied times in the raw METABRIC dataset. 
+
+```{r Number unique of event times No rounding}
+# total possible pairs in Metabric
+n_total_pairs <- ((nrow(stacked_predictions))*(nrow(stacked_predictions)-1)) / 2
+
+cat("New number of unique times: ", length(unique(stacked_predictions$test_time)), "\n")
+
+table_times <- table(stacked_predictions$test_time)
+ties_times <- table_times[table_times > 1]
+
+num_tied_pairs <- sum(choose(ties_times, 2))
+
+cat("Number of pairs that have tied times: ", num_tied_pairs, "\n")
+cat("% of tied pairs out of total possible pairs ", num_tied_pairs/n_total_pairs *100, "\n")
+```
+
+Next, we do the same but after rounding the `test_time` variable to the nearest
+integer.
+
+```{r Number unique of event times after Rounding(T,0)}
+stacked_predictions_T2 <- stacked_predictions
+stacked_predictions_T2$test_time <- round(stacked_predictions_T2$test_time)
+
+cat("New number of unique times: ", length(unique(stacked_predictions_T2$test_time)), "\n")
+
+table_times <- table(stacked_predictions_T2$test_time)
+ties_times <- table_times[table_times > 1]
+
+num_tied_pairs <- sum(choose(ties_times, 2))
+
+cat("Number of pairs that have tied times: ", num_tied_pairs, "\n")
+cat("% of tied pairs out of total possible pairs ", num_tied_pairs/n_total_pairs *100, "\n")
+```
+
+## Boostrap samples
+
+For reproducibility across different models, we first generate bootstrap samples
+which will be shared across all models and with or without data rounding. 
+
 
 ```{r Create bootstrap samples, eval=FALSE}
 set.seed(123)
@@ -155,54 +191,7 @@ resample_indices <- replicate(n_bootstraps,
 ```
 
 
-```{r Number unique of event times No rounding}
-# total possible pairs in Metabric
-n_total_pairs <- ((nrow(stacked_predictions))*(nrow(stacked_predictions)-1)) / 2
 
-cat("New number of unique times: ", length(unique(stacked_predictions$test_time)), "\n")
-
-table_times <- table(stacked_predictions$test_time)
-ties_times <- table_times[table_times > 1]
-
-num_tied_pairs <- sum(choose(ties_times, 2))
-n_tied_pairs <- sum((ties_times * (ties_times - 1)) / 2)
-cat("Number of pairs that have tied times: ", num_tied_pairs, "\n")
-cat("% of tied pairs out of total possible pairs ", num_tied_pairs/n_total_pairs *100, "\n")
-
-```
-
-```{r Number unique of event times after Rounding(T,1) }
-stacked_predictions_TT <- stacked_predictions
-stacked_predictions_TT$test_time <- round(stacked_predictions_TT$test_time, 1)
-
-cat("New number of unique times: ", length(unique(stacked_predictions_TT$test_time)), "\n")
-
-table_times <- table(stacked_predictions_TT$test_time)
-ties_times <- table_times[table_times > 1]
-
-num_tied_pairs <- sum(choose(ties_times, 2))
-n_tied_pairs <- sum((ties_times * (ties_times - 1)) / 2)
-cat("Number of pairs that have tied times: ", num_tied_pairs, "\n")
-cat("% of tied pairs out of total possible pairs ", num_tied_pairs/n_total_pairs *100, "\n")
-
-```
-
-
-```{r Number unique of event times after Rounding(T,0)}
-stacked_predictions_T2 <- stacked_predictions
-stacked_predictions_T2$test_time <- round(stacked_predictions_T2$test_time)
-
-cat("New number of unique times: ", length(unique(stacked_predictions_T2$test_time)), "\n")
-
-table_times <- table(stacked_predictions_T2$test_time)
-ties_times <- table_times[table_times > 1]
-
-num_tied_pairs <- sum(choose(ties_times, 2))
-n_tied_pairs <- sum((ties_times * (ties_times - 1)) / 2)
-cat("Number of pairs that have tied times: ", num_tied_pairs, "\n")
-cat("% of tied pairs out of total possible pairs ", num_tied_pairs/n_total_pairs *100, "\n")
-
-```
 
 ```{r Commented out}
 # Bin test_time into 3-month intervals
@@ -230,9 +219,14 @@ cat("% of tied pairs out of total possible pairs ", num_tied_pairs/n_total_pairs
 
 ```
 
-Based on the resample indices for the bootstrap, we generate subsets of the data, that contain the right input type (expected mortality, survival probabilities or RMST), for the right models. 
 
-We will re-use the same bootstrap samples for all the discretizations. 
+## Extract model predictions
+
+We consider RMST and the survival probabilities themselves (needed for `pycox`)
+
+Based on the resample indices for the bootstrap, we generate subsets of the data, 
+that contain the right input type (survival probabilities or RMST), for the right models. 
+
 
 ```{r Generate subsets from bootstrap indexes. No rounding}
 
@@ -254,23 +248,6 @@ for (r in seq_along(resample_indices)) {
 }
 ```
 
-```{r Generate subsets from bootstrap indexes. Rounding(T, 1)}
-subset_expm_TT <- list()
-subset_surv_TT <- list()
-subset_rmst_TT <- list()
-for (r in seq_along(resample_indices)) {
-
-  subset_surv_TT[[r]] <- get_model_preds2(stacked_predictions = stacked_predictions_TT, 
-                model_names = "all",
-                input_type = "Distribution",
-                bootstrap_patient_ids = resample_indices[[r]])
-  subset_rmst_TT[[r]] <- get_model_preds2(stacked_predictions = stacked_predictions_TT, 
-                  model_names = "all",
-                  input_type = "RMST",
-                  bootstrap_patient_ids = resample_indices[[r]])
-  
-}
-```
 
 ```{r Generate subsets from bootstrap indexes. Rounding(T, 0)}
 subset_expm_T2 <- list()
@@ -291,8 +268,12 @@ for (r in seq_along(resample_indices)) {
 }
 ```
 
+## C-index estimation
 
-Estimation of the C-index based on just RMST and survival. The implementations are chosen for their ability to turn on and off the inclusion of ties in times. Therefore only pec is tested here for $C_\tau$, and pycox is tested for $C_{td}$. However, any of the implementations we have gathered in this study estimating $C$ allow for inclusion/exclusion of ties based on user-defined parameters. 
+The implementations are chosen for their ability to turn on and off the inclusion of ties in times. 
+Therefore only `pec` is tested here for $C_\tau$, and `pycox` is tested for $C_{td}$. 
+However, none of the implementations we have gathered in this study estimating $C$ allow for inclusion/exclusion of ties based on user-defined parameters. 
+
 
 ```{r Estimation C-index No rounding}
 # Get the right columns
@@ -392,105 +373,6 @@ for (model in model_names) {
 
 ```
 
-```{r Estimation of C-index Rounding(T,1)}
-# Get the right columns
-select_rmst_TT <- grep("RMST\\.",colnames(subset_rmst_TT[[1]]), value = TRUE)
-# Generate the empty list
-results_rmst_pe_incl_ties_TT <- list() 
-results_rmst_pe_excl_ties_TT <- list() 
-results_rmst_bo_excl_ties_TT <- list()
-results_rmst_bo_incl_ties_TT <- list()
-
-# Run the Ctau
-for (rmst in select_rmst_TT) {
-   cat("Calculating bootstrap for RSMT for Model = ", rmst, "\n")
-   # Run the inclusion of ties
-   # Bootstrap
-   results_rmst_bo_incl_ties_TT[[rmst]] <- bootstrap.metric.parallel(metrics.wrapper2,
-                                  dataset=list(
-                                     predicted = rmst,
-                                     censoring = "test_status",
-                                     time = "test_time"),
-                                  implementation = list("pec::cindex"),
-                                  eval.times = 120, 
-                                  sampled_data = subset_rmst_TT, 
-                                  additional = list(
-                                    pec_incl_ties_pred = TRUE,
-                                    pec_incl_ties_times = TRUE,
-                                    pec_incl_both_tied = TRUE
-                                  ))
-   # Point estimate
-   results_rmst_pe_incl_ties_TT[[rmst]] <- metrics.wrapper2(predicted = stacked_predictions_TT[[rmst]],
-                                                        censoring = stacked_predictions_TT$test_status,
-                                                        time = stacked_predictions_TT$test_time,
-                                                        implementation = list("pec::cindex"),
-                                                        eval.times = 120,
-                                                        pec_incl_ties_pred = TRUE,
-                                                        pec_incl_ties_times = TRUE,
-                                                        pec_incl_both_tied = TRUE
-                                                        )
-   # Run the exclusion of ties
-   # Bootstrap
-   results_rmst_bo_excl_ties_TT[[rmst]] <- bootstrap.metric.parallel(metrics.wrapper2,
-                                  dataset=list(
-                                     predicted = rmst,
-                                     censoring = "test_status",
-                                     time = "test_time"),
-                                  implementation = list("pec::cindex"),
-                                  eval.times = 120, 
-                                  sampled_data = subset_rmst_TT, 
-                                  additional = list(
-                                    pec_incl_ties_pred = TRUE,
-                                    pec_incl_ties_times = FALSE,
-                                    pec_incl_both_tied = FALSE
-                                    
-                                  ))
-   # Point estimate
-   results_rmst_pe_excl_ties_TT[[rmst]] <- metrics.wrapper2(predicted = stacked_predictions_TT[[rmst]],
-                                                        censoring = stacked_predictions_TT$test_status,
-                                                        time = stacked_predictions_TT$test_time,
-                                                        implementation = list("pec::cindex"),
-                                                        eval.times = 120,
-                                                        pec_incl_ties_pred = TRUE,
-                                                        pec_incl_ties_times = FALSE,
-                                                        pec_incl_both_tied = FALSE)
-   
-   
-
-}
-
-
-
-# Run the Ctd
-model_names <- unique(sub("\\..*", "", grep("^[A-Za-z]+\\.\\d+$",
-                                            colnames(subset_surv_TT[[1]]), value = TRUE)))
-results_surv_bo_TT <- list()
-results_surv_pe_TT <- list()
-for (model in model_names) {
-  cat("Calculating bootstrap for Distribution for Model = ", model, "\n")
-  # Bootstrap
-  results_surv_bo_TT[[model]] <-  bootstrap.metric(metrics.wrapper,
-                                  dataset=list(
-                                     predicted = model,
-                                     censoring = "test_status",
-                                     time = "test_time"),
-                                  implementation = list("pycox.Adj.Ant", "pycox.Ant"),
-                                  sampled_data = subset_surv_TT)
-  # Generate matrix to estimate 
-  surv_mat = stacked_predictions_TT[, grep(paste0("^", model), names(stacked_predictions_TT), 
-                                        value = TRUE), drop = FALSE]
-  colnames(surv_mat) <- as.numeric(sub(".*\\.", "", colnames(surv_mat)))
-  # Point estimate
-  results_surv_pe_TT[[model]] <- metrics.wrapper(surv_matrix = surv_mat, 
-                                                    censoring = stacked_predictions_TT$test_status, 
-                                                    time = stacked_predictions_TT$test_time, 
-                                                    implementation = list("pycox.Ant",
-                                                                          "pycox.Adj.Ant"))
-
-}
-```
-
-
 ```{r Estimation of C-index Rounding(T,0)}
 # Get the right column
 select_rmst_T2 <- grep("RMST\\.",colnames(subset_rmst_T2[[1]]), value = TRUE)
@@ -589,6 +471,10 @@ for (model in model_names) {
 
 ```
 
+## Results
+
+Here, we extract the information used to generate our plots:
+
 
 ```{r Extract the information from list to plot}
 # Extract inf for plotting
@@ -613,15 +499,11 @@ surv_df_plot_TT <- make_surv_plot_entries(results_surv_bo_TT, results_surv_pe_TT
 surv_df_plot_T2 <- make_surv_plot_entries(results_surv_bo_T2, results_surv_pe_T2)
 ```
 
-```{r Fomat it to plot}
+```{r Format it to plot}
 # Add notation
 surv_df_plot$Notation            <- "C_td"
 rmst_pec_excl_ties$Notation      <- "C_tau_10"
 rmst_pec_incl_ties$Notation      <- "C_tau_10"
-
-surv_df_plot_TT$Notation         <- "C_td"
-rmst_pec_excl_ties_TT$Notation   <- "C_tau_10"
-rmst_pec_incl_ties_TT$Notation   <- "C_tau_10"
 
 surv_df_plot_T2$Notation         <- "C_td"  
 rmst_pec_excl_ties_T2$Notation   <- "C_tau_10"
@@ -630,17 +512,14 @@ rmst_pec_incl_ties_T2$Notation   <- "C_tau_10"
 ## Add the tie not ties
 surv_df_plot$Incl.Ties.Times    <- ifelse(surv_df_plot$Metric == "pycox.Adj.Ant", 
                                           "pycox.Adj.Ant", "pycox.Ant*")
-surv_df_plot_TT$Incl.Ties.Times <- ifelse(surv_df_plot_TT$Metric == "pycox.Adj.Ant", 
-                                          "pycox.Adj.Ant", "pycox.Ant*")
+
 surv_df_plot_T2$Incl.Ties.Times <- ifelse(surv_df_plot_T2$Metric == "pycox.Adj.Ant", 
                                           "pycox.Adj.Ant", "pycox.Ant*")
 
 rmst_pec_incl_ties$Incl.Ties.Times     <- rmst_pec_incl_ties$Metric
-rmst_pec_incl_ties_TT$Incl.Ties.Times  <- rmst_pec_incl_ties_TT$Metric
 rmst_pec_incl_ties_T2$Incl.Ties.Times  <- rmst_pec_incl_ties_T2$Metric
 
 rmst_pec_excl_ties$Incl.Ties.Times     <- paste0(rmst_pec_excl_ties$Metric, "*")
-rmst_pec_excl_ties_TT$Incl.Ties.Times  <- paste0(rmst_pec_excl_ties_TT$Metric, "*")
 rmst_pec_excl_ties_T2$Incl.Ties.Times  <- paste0(rmst_pec_excl_ties_T2$Metric, "*")
 
 
@@ -649,17 +528,12 @@ surv_df_plot$Rounding          <- "No Rounding"
 rmst_pec_excl_ties$Rounding      <- "No Rounding"
 rmst_pec_incl_ties$Rounding     <- "No Rounding"
 
-surv_df_plot_TT$Rounding       <- "Round(T,1)"
-rmst_pec_excl_ties_TT$Rounding   <- "Round(T,1)"
-rmst_pec_incl_ties_TT$Rounding  <- "Round(T,1)"
-
 surv_df_plot_T2$Rounding       <- "Round(T,0)"  
 rmst_pec_excl_ties_T2$Rounding   <- "Round(T,0)"
 rmst_pec_incl_ties_T2$Rounding  <- "Round(T,0)"
 
 # Bind by row
 df_plot <- bind_rows(surv_df_plot, rmst_pec_excl_ties, rmst_pec_incl_ties, 
-                     surv_df_plot_TT, rmst_pec_excl_ties_TT, rmst_pec_incl_ties_TT,
                      surv_df_plot_T2, rmst_pec_excl_ties_T2, rmst_pec_incl_ties_T2)
 
 ```
@@ -707,26 +581,21 @@ n_metrics <- length(metric_levels)
 
 surv_df_plot$Incl.Ties.Times    <- ifelse(surv_df_plot$Metric == "pycox.Adj.Ant", 
                                           TRUE, FALSE)
-surv_df_plot_TT$Incl.Ties.Times <- ifelse(surv_df_plot_TT$Metric == "pycox.Adj.Ant", 
-                                          TRUE, FALSE)
 surv_df_plot_T2$Incl.Ties.Times <- ifelse(surv_df_plot_T2$Metric == "pycox.Adj.Ant", 
                                           TRUE, FALSE)
 
 rmst_pec_incl_ties$Incl.Ties.Times     <- TRUE
-rmst_pec_incl_ties_TT$Incl.Ties.Times  <- TRUE
 rmst_pec_incl_ties_T2$Incl.Ties.Times  <- TRUE
 
 rmst_pec_excl_ties$Incl.Ties.Times     <- FALSE
-rmst_pec_excl_ties_TT$Incl.Ties.Times  <- FALSE
 rmst_pec_excl_ties_T2$Incl.Ties.Times  <- FALSE
 
 
 df_plot <- bind_rows(surv_df_plot, rmst_pec_excl_ties, rmst_pec_incl_ties, 
-                     surv_df_plot_TT, rmst_pec_excl_ties_TT, rmst_pec_incl_ties_TT,
                      surv_df_plot_T2, rmst_pec_excl_ties_T2, rmst_pec_incl_ties_T2)
 
 # Filter rows
-subset_latex <- df_plot[df_plot$Model == "CoxPH", ]
+subset_latex <- df_plot
 
 # Create a C-index (95% CI) column
 subset_latex$CIndex <- sprintf("%.4f [%.4f, %.4f]",
@@ -735,7 +604,7 @@ subset_latex$CIndex <- sprintf("%.4f [%.4f, %.4f]",
                                   subset_latex$upper)
 
 # Select relevant columns
-subset_latex <- subset_latex[, c("Metric", "Notation", "Rounding", "Incl.Ties.Times", "CIndex")]
+subset_latex <- subset_latex[, c("Metric","Model", "Notation", "Rounding", "Incl.Ties.Times", "CIndex")]
 
 subset_latex <- subset_latex[order(subset_latex$Notation,
                                    subset_latex$Rounding,
@@ -746,11 +615,17 @@ subset_latex <- subset_latex[order(subset_latex$Notation,
 ```
 
 
-### Ties in predictions
+# Ties in predictions
 
 To study the ties in prediction we restart the global environment variables. 
 
-We would create three different models based on increasing discretization of the age as covariates. After we would estimate the C-index with those implementations where we can change the inclusion of ties in predictions based on user-defined parameters. Those are pysurvival and Hmisc for $C$, pec for $C_\tau$ and pycox for $C_\{td}$
+We would create three different models based on increasing discretization of 
+the age as covariates. After we would estimate the C-index with those 
+implementations where we can change the inclusion of ties in predictions based 
+on user-defined parameters. Those are pysurvival and Hmisc for $C$, pec for 
+$C_\tau$ and pycox for $C_\{td}$
+
+Here, we restart the environment and load the required libraries. 
 
 ```{r Restart}
 rm(list = ls())
@@ -767,7 +642,7 @@ library(pec)
 library(survival)
 library(rhdf5)
 library(randomForestSRC)
-library(survAUC)
+#library(survAUC)
 library(Hmisc)
 library(dplyr)
 # Plotting
@@ -785,6 +660,7 @@ library(survivalmodels)
 library(tidyr)
 ```
 
+We also re-load the data. 
 
 ```{r Load data}
 # Load data downloaded from the cBioPortal 
@@ -820,10 +696,17 @@ summary(mb$time)
 # Order according to time and status
 mb[order(mb$time, -mb$status),]
 ```
+Next, we load the helper functions used throughout our analysis.
 
 ```{r Load functions}
 source("./CindexHelperFunctions.R")
 ```
+
+## Age rounding
+
+Here, we apply to different rounding strategies to age. First, we round the 
+age to the nearest integer, and then we create 5-year bins.
+
 
 ```{r Number of unique age values}
 length(unique(mb$X9))
@@ -841,10 +724,18 @@ mb$X9_bin <- cut(
   right = FALSE,
   include.lowest = TRUE
 )
+breaks <- seq(range_start, range_end, by = 5)
 
+midpoints <- head(breaks, -1) + 2.5
+
+mb$X9_bin <- midpoints[as.integer(mb$X9_bin)]
 ```
 
+## Model fitting
 
+We will fit Cox PH models using age as the only covariate. Different models will
+be fitted using the raw values of age, as well as the two rounded age values 
+that were created in the previous section. 
 
 ```{r 5foldCV, eval=FALSE}
 ## Reproducibility
@@ -880,8 +771,6 @@ numeric_cols <- c("X1", "X2", "X3", "X4", "X9")
 survival_curves <- vector("list", K)
 
 # Shuffle indices and create folds
-#indices <- sample(seq_len(n))
-#folds <- cut(indices, breaks = K, labels = FALSE)
 folds <- createFolds(mb$status, k = K, list = TRUE) # return test sets
 
 # Interesting intervals for prediction
@@ -890,10 +779,6 @@ ts_scaled <- seq(0, mb_t_max, 1)
 
 for (k in 1:K) {
 
-  # Define test and training indices
-  #mb_test_idx  <- which(folds == k)
-  #mb_train_idx <- setdiff(seq_len(n), mb_test_idx)
-  
   # Define test and training indices
   mb_test_idx  <- folds[[k]]
   mb_train_idx <- setdiff(seq_len(nrow(mb)), mb_test_idx)
@@ -909,16 +794,9 @@ for (k in 1:K) {
   sds   <- sapply(mb_train[, numeric_cols], sd)
 
   mb_train[, numeric_cols] <- scale(mb_train[, numeric_cols],
-                                    center = means, scale = sds)
+                                   center = means, scale = sds)
   mb_test[, numeric_cols]  <- scale(mb_test[, numeric_cols],
-                                    center = means, scale = sds)
-
-  mb_train$time <- mb_train$time
-  mb_test$time <- mb_test$time
-  
-  # Extract only the covariates used for predictions
-  test_covariates <- mb_test[, c("X1", "X2", "X3", "X4",
-                                 "X5", "X6", "X7", "X8", "X9")]
+                                   center = means, scale = sds)
 
   # Fit models
   #cat("Dataset:", i, ".", j, '\n')
@@ -932,10 +810,8 @@ for (k in 1:K) {
   cat('Test set censoring:', mean(mb_test$status == 0)*100, '\n')
   cat('\n')
   
-  
   predictors <- c("X9", "X9_round", "X9_bin")
 
-  
   # Create a named list to store results
   cox_surv_list <- list()
   
@@ -944,7 +820,7 @@ for (k in 1:K) {
     form <- as.formula(paste("Surv(time, status) ~", var))
     
     cox_ph <- coxph(formula = form, data = mb_train)
-    
+
     sf <- survfit(cox_ph, newdata = mb_test)
 
     surv_cox <- t(sf$surv)
@@ -969,16 +845,14 @@ for (k in 1:K) {
                                test_status = mb_test$status,
                                CoxPH = as.data.frame(cox_surv_list[["X9"]]),
                                CoxPH_round = as.data.frame(cox_surv_list[["X9_round"]]),
-                               CoxPH_bin = as.data.frame(cox_surv_list[["X9_bin"]]),
-                               covariates = test_covariates)
+                               CoxPH_bin = as.data.frame(cox_surv_list[["X9_bin"]]))
   fold_results <- data.frame(cv_fold = k,
                              patients_ids = rownames(mb_test), 
                              test_time = mb_test$time,
                              test_status = mb_test$status,
                              CoxPH = as.data.frame(cox_surv_list[["X9"]]),
                              CoxPH_round = as.data.frame(cox_surv_list[["X9_round"]]),
-                             CoxPH_bin = as.data.frame(cox_surv_list[["X9_bin"]]),
-                             covariates = test_covariates)
+                             CoxPH_bin = as.data.frame(cox_surv_list[["X9_bin"]]))
     
 
   # Append fold results to the list
@@ -1100,7 +974,6 @@ resample_indices <- replicate(n_bootstraps,
                                      size = size_sample, replace = TRUE), 
                               simplify = FALSE)
 ```
-
 
 
 ```{r Extract datasets from bootstrap sample indices}
@@ -1235,82 +1108,42 @@ surv_df_plot <- make_surv_plot_entries(results_surv_bo, results_surv_pe)
 ```
 
 
-```{r Format and plot fig.width=7, fig.height=8}
-# Add notation
-surv_df_plot$Notation           <- "C_td"
-rmst_df_plot_incl_ties$Notation <- ifelse(rmst_df_plot_incl_ties$Metric == "pec::cindex",
-                                          "C_tau_10", "C")
-rmst_df_plot_excl_ties$Notation <- ifelse(rmst_df_plot_excl_ties$Metric == "pec::cindex", 
-                                          "C_tau_10", "C")
-
-
-## Add the tie not ties
-surv_df_plot$Incl.Ties.Preds    <- ifelse(surv_df_plot$Metric == "pycox.Adj.Ant", 
-                                          "pycox.Adj.Ant", "pycox.Ant*")
-
-rmst_df_plot_incl_ties$Incl.Ties.Preds  <- rmst_df_plot_incl_ties$Metric
-rmst_df_plot_excl_ties$Incl.Ties.Preds  <- paste0(rmst_df_plot_excl_ties$Metric, "*")
-
-
-# Bind by row
-df_plot <- bind_rows(surv_df_plot, rmst_df_plot_incl_ties, rmst_df_plot_excl_ties)
-
-
-# Adding wounding
-df_plot$Rounding <- factor(df_plot$Model, levels = c("CoxPH", "CoxPH_round", "CoxPH_bin"),
-                        labels = c("No~rounding", "Round(age,~0)", "Binned(age,~5)"))
-
-
-
-df_plot$Notation <- factor(df_plot$Notation, levels = c("C", "C_tau_10", "C_td"),
-                           labels = c(
-                             "tilde(C)~(RMST)",
-                             "tilde(C)[tau]~(RMST~tau==10~y)",
-                             "tilde(C)[td](Surv.Prob.)"
-                           ))
-
-df_plot$Model <- factor(df_plot$Model, levels = c("CoxPH", "CoxPH_round", "CoxPH_bin"),
-                        labels = c("No rounding", "Round(age, 0)", "Binned(age, 5)"))
-### Version with color
- ggplot(df_plot, aes(x = Incl.Ties.Preds, y = cindex, color = Model)) +
-  geom_pointrange(aes(ymin = lower, ymax = upper),
-                  position = position_dodge(width = 0.6), size = 0.6) +
-   facet_wrap(~ Notation + Rounding, nrow = 1, scales = "free_x", labeller = label_parsed)+
-  #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
-  ylim(0.5, 0.7) +
-  labs(title = "",
-       y = "C-index", x = NULL) +
-
-  theme_minimal(base_size = 16.5) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom") 
- 
-
-```
-
-  
-```{r Format and plot 2  fig.width=8, fig.height=6}
+```{r Format and plot 2  fig.width=8, fig.height=9}
 
 # Add notation
 surv_df_plot$Notation           <- "C_td"
-rmst_df_plot_incl_ties$Notation <- ifelse(rmst_df_plot_incl_ties$Metric == "pec::cindex", "C_tau_10", "C")
-rmst_df_plot_excl_ties$Notation <- ifelse(rmst_df_plot_excl_ties$Metric == "pec::cindex", "C_tau_10", "C")
+rmst_df_plot_incl_ties$Notation <- ifelse(rmst_df_plot_incl_ties$Metric == "pec", "C_tau_10", "C")
+rmst_df_plot_excl_ties$Notation <- ifelse(rmst_df_plot_excl_ties$Metric == "pec", "C_tau_10", "C")
 
 
 ## Add the tie not ties
-surv_df_plot$Incl.Ties.Preds        <- ifelse(surv_df_plot$Metric == "pycox.Adj.Ant", 
-                                          "pycox.Adj.Ant", "pycox.Ant*")
-
-rmst_df_plot_incl_ties$Incl.Ties.Preds <- rmst_df_plot_incl_ties$Metric
-rmst_df_plot_excl_ties$Incl.Ties.Preds <- paste0(rmst_df_plot_excl_ties$Metric, "*")
-
+surv_df_plot$Incl.Ties.Preds <- ifelse(surv_df_plot$Metric == "pycox.Adj.Ant", 
+                                          "pycox.Adj.Ant*", "pycox.Ant")
+rmst_df_plot_incl_ties$Incl.Ties.Preds <- paste0(rmst_df_plot_incl_ties$Metric, "*")
+rmst_df_plot_excl_ties$Incl.Ties.Preds <- rmst_df_plot_excl_ties$Metric
 
 # Bind by row
 df_plot <- bind_rows(surv_df_plot, rmst_df_plot_incl_ties, rmst_df_plot_excl_ties)
-
 
 df_plot$Rounding <- factor(df_plot$Model, levels = c("CoxPH", "CoxPH_round", "CoxPH_bin"),
                         labels = c("No~Rounding", "Rounding(age,~0)", "Binned(age,~5)"))
+
+# Define manual order for display
+ordered_levels <- c(
+  "pycox.Ant", "pycox.Adj.Ant*",
+  "pec", "pec*",
+  "Hmisc", "Hmisc*",
+  "pysurvival", "pysurvival*"
+)
+
+# Find remaining levels and append them
+all_levels <- unique(df_plot$Incl.Ties.Preds)
+remaining_levels <- setdiff(all_levels, ordered_levels)
+
+# Combine to form final order
+final_levels <- c(ordered_levels, remaining_levels)
+
+df_plot$Incl.Ties.Preds <- factor(df_plot$Incl.Ties.Preds, levels = final_levels)
 
 
 ggplot(df_plot, aes(x = Incl.Ties.Preds, y = cindex, color = Notation)) +
@@ -1325,7 +1158,6 @@ ggplot(df_plot, aes(x = Incl.Ties.Preds, y = cindex, color = Notation)) +
       expression(tilde(C)[td])
     )
   ) +
-  #geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
   ylim(0.5, 0.7) +
   labs(title = "",
        y = "C-index", x = NULL) +
