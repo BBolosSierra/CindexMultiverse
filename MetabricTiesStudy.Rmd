@@ -881,8 +881,6 @@ stacked_predictions <- df
 
 ```
 
-
-
 ```{r Characteristics of predictions with No rounding}
 cat("Number of patients: ", nrow(stacked_predictions), "\n")
 cat("Number of unique predictions: ", length(unique(stacked_predictions$ExpMort.CoxPH)), "\n")
@@ -1109,18 +1107,25 @@ surv_df_plot <- make_surv_plot_entries(results_surv_bo, results_surv_pe)
 
 
 ```{r Format and plot 2  fig.width=8, fig.height=9}
-
 # Add notation
 surv_df_plot$Notation           <- "C_td"
-rmst_df_plot_incl_ties$Notation <- ifelse(rmst_df_plot_incl_ties$Metric == "pec", "C_tau_10", "C")
-rmst_df_plot_excl_ties$Notation <- ifelse(rmst_df_plot_excl_ties$Metric == "pec", "C_tau_10", "C")
+rmst_df_plot_incl_ties$Notation <- ifelse(rmst_df_plot_incl_ties$Metric == "pec::cindex", "C_tau_10", "C")
+rmst_df_plot_excl_ties$Notation <- ifelse(rmst_df_plot_excl_ties$Metric == "pec::cindex", "C_tau_10", "C")
 
 
 ## Add the tie not ties
 surv_df_plot$Incl.Ties.Preds <- ifelse(surv_df_plot$Metric == "pycox.Adj.Ant", 
                                           "pycox.Adj.Ant*", "pycox.Ant")
-rmst_df_plot_incl_ties$Incl.Ties.Preds <- paste0(rmst_df_plot_incl_ties$Metric, "*")
-rmst_df_plot_excl_ties$Incl.Ties.Preds <- rmst_df_plot_excl_ties$Metric
+rmst_df_plot_incl_ties$Incl.Ties.Preds <- ifelse(
+  rmst_df_plot_incl_ties$Metric == "pec::cindex", "pec*",
+  ifelse(rmst_df_plot_incl_ties$Metric == "Hmisc::rcorr.cens", "Hmisc*",
+         paste0(rmst_df_plot_incl_ties$Metric, "*"))
+)
+rmst_df_plot_excl_ties$Incl.Ties.Preds <- ifelse(
+  rmst_df_plot_excl_ties$Metric == "pec::cindex", "pec",
+  ifelse(rmst_df_plot_excl_ties$Metric == "Hmisc::rcorr.cens", "Hmisc",
+         rmst_df_plot_excl_ties$Metric)
+)
 
 # Bind by row
 df_plot <- bind_rows(surv_df_plot, rmst_df_plot_incl_ties, rmst_df_plot_excl_ties)
