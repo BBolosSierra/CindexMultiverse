@@ -1,4 +1,6 @@
-calculate.pairs.ties <- function(time, delta, mx) {
+calculate.pairs.ties <- function(time, delta, mx, eval.times,
+                                 tiedpredIn = 1, tiedoutcomeIn = 1, 
+                                 tiedmatchIn = 1) {
   
   n <- length(time)
   
@@ -29,6 +31,52 @@ calculate.pairs.ties <- function(time, delta, mx) {
   concordant7 <- 0
   concordant6.survmetrics <- 0 # for SurvMetrics
   
+  case1_pec <- 0
+  case1.ties_pec <- 0
+  case2_pec <- 0
+  case2.ties_pec <- 0
+  case3_pec <- 0
+  case4_pec <- 0
+  case5_pec <- 0
+  case5.ties_pec <- 0
+  case6_pec <- 0
+  case6.ties_pec <- 0
+  case7_pec <- 0
+  concordant1_pec <- 0
+  concordant1.ties_pec <- 0
+  concordant2_pec <- 0
+  concordant2.ties_pec <- 0
+  concordant5_pec <- 0
+  concordant5.ties_pec <- 0
+  concordant6_pec <- 0
+  concordant6.ties_pec <- 0
+  
+  
+  ## calculate weights
+  tmp <- data.frame(Y=time, status=delta, pred = mx)
+  tmp <- tmp[order(tmp$Y),]
+  
+  weight_i <- pec::ipcw(formula=Surv(Y,status)~1,
+                        data=tmp,
+                        method="marginal",
+                        times=unique(tmp$Y),
+                        subjectTimes=tmp$Y, 
+                        what = "IPCW.subjectTimes")$IPCW.subjectTimes
+  
+  weight_j <- pec::ipcw(formula=Surv(Y,status)~1,
+                        data=tmp,
+                        method="marginal",
+                        times=unique(tmp$Y),
+                        subjectTimes=tmp$Y,
+                        subjectTimesLag=0,
+                        what = "IPCW.times")$IPCW.times
+  
+  tindex = match(tmp$Y, unique(tmp$Y))
+  
+  time <- tmp$Y
+  delta = tmp$status 
+  mx = tmp$pred
+  
   for(i in 1:n) {
     for(j in 1:n) {
       if((i != j)) {
@@ -46,6 +94,26 @@ calculate.pairs.ties <- function(time, delta, mx) {
               concordant1 <- concordant1 + 1   
             }
           }
+          # pec
+          wi <- weight_i[i]
+          wj <- weight_j[tindex[i]]
+          
+          ww <- wi * wj
+          if((time[i] <= eval.times) & (wi > 0 && wj > 0)){
+            if (tiedoutcomeIn == 1 || (time[i] != time[j] || delta[j] == 0)) {
+              if (mx[i] == mx[j]) {
+                if (tiedpredIn == 1) {
+                  case1.ties_pec <- case1.ties_pec + 1 / (ww)
+                  concordant1.ties_pec <- concordant1.ties_pec + 0.5 / (ww)
+                }
+              } else {
+                case1_pec <- case1_pec + 1 / (ww)
+                if (mx[i] > mx[j]) {
+                  concordant1_pec <- concordant1_pec + 1 / (ww)
+                }
+              }
+            }
+          }
         }
         if((time[i] > time[j]) & (delta[i] == 1) & (delta[j] == 1)) {
           if(mx[i] == mx[j]) {
@@ -56,8 +124,27 @@ calculate.pairs.ties <- function(time, delta, mx) {
             if(mx[i] < mx[j])
               concordant1 <- concordant1 + 1  
           }
+          wi <- weight_i[j]
+          wj <- weight_j[tindex[j]]
+          
+          ww <- wi * wj
+          if((time[j] <= eval.times) & (wi > 0 && wj > 0)){
+            if (tiedoutcomeIn == 1 || (time[i] != time[j] || delta[i] == 0)) {
+              if (mx[i] == mx[j]) {
+                if (tiedpredIn == 1) {
+                  case1.ties_pec <- case1.ties_pec + 1 / (ww)
+                  concordant1.ties_pec <- concordant1.ties_pec + 0.5 / (ww)
+                }
+              } else {
+                case1_pec <- case1_pec + 1 / (ww)
+                if (mx[i] < mx[j]) {
+                  concordant1_pec <- concordant1_pec + 1 / (ww)
+                }
+              }
+            }
+          }
         }
-        
+
         # Case 2
         if((time[i] < time[j]) & (delta[i] == 1) & (delta[j] == 0)) {
           if(mx[i] == mx[j]) {
@@ -68,7 +155,25 @@ calculate.pairs.ties <- function(time, delta, mx) {
             if(mx[i] > mx[j]) {
               concordant2 <- concordant2 + 1  
             }
-          }         
+          }
+          # pec
+          wi <- weight_i[i]
+          wj <- weight_j[tindex[i]]
+          
+          ww <- wi * wj
+          if ((time[i] <= eval.times) & (wi > 0 && wj > 0)) {
+            if (mx[i] == mx[j]) {
+              if (tiedpredIn == 1) {
+                case2.ties_pec <- case2.ties_pec + 1 / ww
+                concordant2.ties_pec <- concordant2.ties_pec + 0.5 / ww
+              }
+            } else {
+              case2_pec <- case2_pec + 1 / ww
+              if (mx[i] > mx[j]) {
+                concordant2_pec <- concordant2_pec + 1 / ww
+              }
+            }
+          }
         }
         if((time[i] > time[j]) & (delta[i] == 0) & (delta[j] == 1)) {
           if(mx[i] == mx[j]) {
@@ -78,6 +183,24 @@ calculate.pairs.ties <- function(time, delta, mx) {
             case2 <- case2 + 1 
             if(mx[i] < mx[j]) {
               concordant2 <- concordant2 + 1  
+            }
+          }
+          # pec
+          wi <- weight_i[j]
+          wj <- weight_j[tindex[j]]
+          
+          ww <- wi * wj
+          if ((time[j] <= eval.times) & (wi > 0 && wj > 0)) {
+            if (mx[i] == mx[j]) {
+              if (tiedpredIn == 1) {
+                case2.ties_pec <- case2.ties_pec + 1 / ww
+                concordant2.ties_pec <- concordant2.ties_pec + 0.5 / ww
+              }
+            } else {
+              case2_pec <- case2_pec + 1 / ww
+              if (mx[i] < mx[j]) {
+                concordant2_pec <- concordant2_pec + 1 / ww
+              }
             }
           }
         }
@@ -94,7 +217,7 @@ calculate.pairs.ties <- function(time, delta, mx) {
         if((time[i] > time[j]) & (delta[i] == 0) & (delta[j] == 0))  
           case4 <- case4 + 1
         
-        # Case 5 - only SurMetrics considers this
+        # Case 5 - only SurvMetrics considers this
         if((time[i] == time[j]) & (delta[i] == 1) & (delta[j] == 1)) {
           if(mx[i] == mx[j]) {
             case5.ties <- case5.ties + 1
@@ -103,6 +226,10 @@ calculate.pairs.ties <- function(time, delta, mx) {
             case5 <- case5 + 1    
             concordant5 <- concordant5 + 0.5 # adds 0.5 as per SurvMetrics
           }
+          #if ((time[i] <= eval.times) & (wi > 0 && wj > 0)) {
+          #  case5_pec <- case5_pec + 1 / ww
+          #  concordant5_pec <- concordant5_pec + 0.5 / ww
+          #}
         }
         
         # Case 6
@@ -117,6 +244,16 @@ calculate.pairs.ties <- function(time, delta, mx) {
             if(mx[i] < mx[j])
               concordant6.survmetrics <- concordant6.survmetrics + 0.5
           }
+          wi <- weight_i[i]
+          wj <- weight_j[tindex[i]]
+          
+          ww <- wi * wj
+          if ((time[i] <= eval.times) & (wi > 0 && wj > 0)) {
+            case6_pec <- case6_pec + 1 / ww
+            if (mx[i] > mx[j]) {
+              concordant6_pec <- concordant6_pec + 1 / ww
+            }
+          }
         }
         if((time[i] == time[j]) & (delta[i] == 0) & (delta[j] == 1)) {
           if(mx[i] == mx[j]) {
@@ -129,8 +266,17 @@ calculate.pairs.ties <- function(time, delta, mx) {
             if(mx[i] > mx[j])
               concordant6.survmetrics <- concordant6.survmetrics + 0.5
           }
+          wi <- weight_i[j]
+          wj <- weight_j[tindex[j]]
+          
+          ww <- wi * wj
+          if ((time[j] <= eval.times) & (wi > 0 && wj > 0)) {
+            case6_pec <- case6_pec + 1 / ww
+            if (mx[i] < mx[j]) {
+              concordant6_pec <- concordant6_pec + 1 / ww
+            }
+          }
         }
-        
         # Case 7
         if((time[i] == time[j]) & (delta[i] == 0) & (delta[j] == 0))  
           case7 <- case7 + 1       
@@ -162,6 +308,23 @@ calculate.pairs.ties <- function(time, delta, mx) {
        concordant6.ties = concordant6.ties,
        concordant7 = concordant7,
        concordant6.survmetrics = concordant6.survmetrics,
+       # pec
+       case1_pec = case1_pec,
+       case1.ties_pec = case1.ties_pec,
+       case2_pec = case2_pec,
+       case2.ties_pec = case2.ties_pec,
+       case5_pec = case5_pec,
+       case5.ties_pec = case5.ties_pec,
+       case6_pec = case6_pec,
+       case6.ties_pec = case6.ties_pec,
+       concordant1_pec = concordant1_pec,
+       concordant1.ties_pec = concordant1.ties_pec,
+       concordant2_pec = concordant2_pec,
+       concordant2.ties_pec = concordant2.ties_pec,
+       concordant5_pec = concordant5_pec,
+       concordant5.ties_pec = concordant5.ties_pec,
+       concordant6_pec = concordant6_pec,
+       
        total_concordant = concordant1 + concordant2 + concordant3 +
          concordant4 + concordant5 + concordant6 + concordant7 +
          concordant1.ties + concordant2.ties + 
@@ -242,6 +405,19 @@ concordantsksurv <- function(MyC) {
     MyC$concordant6 + MyC$concordant6.ties 
 }
 
+comparablepec <- function(MyC) {
+  MyC$case1_pec + MyC$case1.ties_pec +
+    MyC$case2_pec + MyC$case2.ties_pec +
+    #MyC$case5_pec + MyC$case5.ties_pec +
+    MyC$case6_pec + MyC$case6.ties_pec
+}
+
+concordantpec <- function(MyC) {
+  MyC$concordant1_pec + MyC$concordant1.ties_pec +
+    MyC$concordant2_pec + MyC$concordant2.ties_pec +
+    #MyC$concordant5_pec + MyC$concordant5.ties_pec +
+    MyC$concordant6_pec
+}
 ## Adaptation of SurvMetrics function to break the calculation into cases
 Cindex_aux <- function(object, predicted) 
 {
@@ -396,6 +572,117 @@ sksurv.censoredR <- function(time, predicted, censoring, tied_tol = 1e-8) {
   
 }
 
+
+cindexSRC_R <- function(Y, status, times, pred,
+                        tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1) {
+  # Parameters:
+  # Y: Vector of survival times
+  # status: Event indicator (1 = event, 0 = censored)
+  # times: Evaluation times
+  # weight_i: IPCW weights for subjects
+  # weight_j: IPCW weights for time points or subject pairs
+  # pred: Matrix of predictions (subjects x times)
+  # tindex: Time indices for survival times
+  # tiedpredIn, tiedoutcomeIn, tiedmatchIn: Tie-handling parameters
+  
+  N <- length(Y)  # Number of subjects
+  NT <- length(times)  # Number of evaluation times
+  #status <- ifelse(status == 1, 0, 1)
+  tmp <- data.frame(Y, status, pred)
+  tmp <- tmp[order(tmp$Y),]
+
+  weight_i <- pec::ipcw(formula=Surv(Y,status)~1,
+                        data=tmp,
+                        method="marginal",
+                        times=unique(tmp$Y),
+                        subjectTimes=tmp$Y, 
+                        what = "IPCW.subjectTimes")$IPCW.subjectTimes
+  
+  #tmp$ipcw_subject_times <- weight.i
+  
+  weight_j <- pec::ipcw(formula=Surv(Y,status)~1,
+                        data=tmp,
+                        method="marginal",
+                        times=unique(tmp$Y),
+                        subjectTimes=tmp$Y,
+                        subjectTimesLag=0,
+                        what = "IPCW.times")$IPCW.times
+  
+  tindex = match(tmp$Y, unique(tmp$Y))
+  #tmp$ipcw_times <- weight.j
+  
+  Y = tmp$Y
+  status = tmp$status
+  pred = as.matrix(1 - tmp$pred)
+  
+  # Initialize result vectors
+  C <- numeric(NT)
+  conc <- numeric(NT)
+  pairs <- numeric(NT)
+  
+  # Loop over evaluation times
+  for (s in seq_len(NT)) {
+    conc[s] <- 0
+    pairs[s] <- 0
+    
+    # Loop over subjects
+    for (i in seq_len(N)) {
+      # Usable pairs: i's event time must be <= current time and uncensored
+      if (Y[i] <= times[s] && status[i] == 1) {
+        for (j in seq(i + 1, N)) {  # Only consider pairs (i, j) with j > i
+          # Compute IPCW weights
+          wi <- weight_i[i]
+          wj <- weight_j[tindex[i]]
+          
+          ww <- wi * wj
+          
+          # Skip pairs with zero weights
+          if (wi > 0 && wj > 0) {
+            # Tied outcomes and predictions: Fully concordant if tiedmatchIn == TRUE
+            if (tiedmatchIn == 1 && Y[i] == Y[j] && status[j] == 1 &&
+                pred[i, s] == pred[j, s]) {
+              pairs[s] <- pairs[s] + 1 / ww
+              conc[s] <- conc[s] + 1 / ww
+            } else {
+              # If tiedoutcomeIn == 0, exclude pairs with tied outcomes (unless j is censored)
+              if (tiedoutcomeIn == 1 || (Y[i] != Y[j] || status[j] == 0)) {
+                # Tied predictions: Include as half-concordant if tiedpredIn == TRUE
+                if (pred[i, s] == pred[j, s]) {
+                  if (tiedpredIn == 1) {
+                    pairs[s] <- pairs[s] + 1 / ww
+                    conc[s] <- conc[s] + 1 / (2 * ww)
+                  }
+                } else {
+                  # Concordant if pred[i, s] < pred[j, s]
+                  pairs[s] <- pairs[s] + 1 / ww
+                  if (pred[i, s] < pred[j, s]) {
+                    conc[s] <- conc[s] + 1 / ww
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    # Compute C-index for time s
+    if (pairs[s] > 0) {
+      C[s] <- conc[s] / pairs[s]
+    } else {
+      C[s] <- NA  # Avoid division by zero
+    }
+  }
+  
+  list(Cindex = C,
+       concordant = conc, 
+       comparable = pairs
+  )
+}
+
+
+
+
 library(Hmisc)
 library(SurvMetrics)
 library(survival)
@@ -409,7 +696,7 @@ cens   <- runif(n, 5, 20)
 death  <- ifelse(d.time <= cens, 1, 0)
 d.time <- pmin(d.time, cens)
 
-MyC <- calculate.pairs.ties(d.time, death, age)
+MyC <- calculate.pairs.ties(d.time, death, age, eval.times = max(d.time))
 
 ## Hmisc - OK
 C1 <- Hmisc::rcorr.cens(-age, Surv(d.time, death))
@@ -457,6 +744,43 @@ concordantsksurv(MyC)/2
 comparablesksurv(MyC)/2
 C5$concordant + C5$discordant
 #C5$last_tied_time
+
+## pec: 
+tmp <- data.frame(age, death, d.time)
+eval.times <- max(d.time)
+pec_true <- pec::cindex(
+  list("res" = as.matrix(1 - age)),
+  formula = Hist(d.time, death) ~ 1, 
+  data = tmp, 
+  eval.times = eval.times,
+  cens.model = "marginal", # default marginal
+)
+pec_true$AppCindex$res
+pec_true$Concordant$res/2
+pec_true$Pairs$res/2
+
+pec2 <- cindexSRC_R(Y = d.time, status = death, times = eval.times, 
+            pred = age, tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
+pec2$Cindex
+pec2$concordant
+pec2$comparable
+
+comparablepec <- function(MyC) {
+  MyC$case1_pec + MyC$case1.ties_pec +
+    MyC$case2_pec + MyC$case2.ties_pec +
+    MyC$case6_pec + MyC$case6.ties_pec
+}
+
+concordantpec <- function(MyC) {
+  MyC$concordant1_pec + MyC$concordant1.ties_pec +
+    MyC$concordant2_pec + MyC$concordant2.ties_pec +
+    MyC$concordant6_pec 
+}
+
+concordantpec(MyC)/2
+comparablepec(MyC)/2
+concordantpec(MyC) / comparablepec(MyC)
+
 
 # Setting 2: ties in time (only in uncensored)
 d.time.ties1 <- round(d.time, 1)
