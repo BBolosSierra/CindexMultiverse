@@ -77,8 +77,8 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
   delta = tmp$status 
   mx = tmp$pred
   
-  for(i in 1:n) {
-    for(j in 1:n) {
+  for(i in 1:(n - 1)) {
+    for(j in (i + 1):n) {
       if((i != j)) {
         
         # Case 1 
@@ -100,17 +100,15 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
           
           ww <- wi * wj
           if((time[i] <= eval.times) & (wi > 0 && wj > 0)){
-            if (tiedoutcomeIn == 1 || (time[i] != time[j] || delta[j] == 0)) {
-              if (mx[i] == mx[j]) {
-                if (tiedpredIn == 1) {
-                  case1.ties_pec <- case1.ties_pec + 1 / (ww)
-                  concordant1.ties_pec <- concordant1.ties_pec + 0.5 / (ww)
-                }
-              } else {
-                case1_pec <- case1_pec + 1 / (ww)
-                if (mx[i] > mx[j]) {
-                  concordant1_pec <- concordant1_pec + 1 / (ww)
-                }
+            if (mx[i] == mx[j]) {
+              if (tiedpredIn == 1) {
+                case1.ties_pec <- case1.ties_pec + 1 / (ww)
+                concordant1.ties_pec <- concordant1.ties_pec + 0.5 / (ww)
+              }
+            } else {
+              case1_pec <- case1_pec + 1 / (ww)
+              if (mx[i] > mx[j]) {
+                concordant1_pec <- concordant1_pec + 1 / (ww)
               }
             }
           }
@@ -129,17 +127,15 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
           
           ww <- wi * wj
           if((time[j] <= eval.times) & (wi > 0 && wj > 0)){
-            if (tiedoutcomeIn == 1 || (time[i] != time[j] || delta[i] == 0)) {
-              if (mx[i] == mx[j]) {
-                if (tiedpredIn == 1) {
-                  case1.ties_pec <- case1.ties_pec + 1 / (ww)
-                  concordant1.ties_pec <- concordant1.ties_pec + 0.5 / (ww)
-                }
-              } else {
-                case1_pec <- case1_pec + 1 / (ww)
-                if (mx[i] < mx[j]) {
-                  concordant1_pec <- concordant1_pec + 1 / (ww)
-                }
+            if (mx[i] == mx[j]) {
+              if (tiedpredIn == 1) {
+                case1.ties_pec <- case1.ties_pec + 1 / (ww)
+                concordant1.ties_pec <- concordant1.ties_pec + 0.5 / (ww)
+              }
+            } else {
+              case1_pec <- case1_pec + 1 / (ww)
+              if (mx[i] < mx[j]) {
+                concordant1_pec <- concordant1_pec + 1 / (ww)
               }
             }
           }
@@ -226,12 +222,22 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
             case5 <- case5 + 1    
             concordant5 <- concordant5 + 0.5 # adds 0.5 as per SurvMetrics
           }
-          wi <- weight_i[j] ## is this or j ?
-          wj <- weight_j[tindex[j]] ## is this or j ?
+          wi <- weight_i[i] ## is this or j ?
+          wj <- weight_j[tindex[i]] ## is this or j ?
           ww <- wi * wj
           if ((time[i] <= eval.times) & (wi > 0 && wj > 0)) {
-            case5_pec <- case5_pec + 1 / ww
-            concordant5_pec <- concordant5_pec + 0.5 / ww
+            if (tiedoutcomeIn == 1) {  
+              case5_pec <- case5_pec + 1 / ww
+              if (mx[i] == mx[j]) {
+                if (tiedmatchIn == 1) {
+                  concordant5_pec <- concordant5_pec + 1 / ww
+                } else if (tiedpredIn == 1) {
+                  concordant5_pec <- concordant5_pec + 0.5 / ww
+                }
+              } else if (mx[i] > mx[j]) {
+                concordant5_pec <- concordant5_pec + 1 / ww
+              }
+            }
           }
         }
         
@@ -256,6 +262,9 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
             if (mx[i] > mx[j]) {
               concordant6_pec <- concordant6_pec + 1 / ww
             }
+            if (mx[i] == mx[j] && tiedpredIn == 1) {
+              concordant6.ties_pec <- concordant6.ties_pec + 0.5 / ww
+            }
           }
         }
         if((time[i] == time[j]) & (delta[i] == 0) & (delta[j] == 1)) {
@@ -275,6 +284,9 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
           ww <- wi * wj
           if ((time[j] <= eval.times) & (wi > 0 && wj > 0)) {
             case6_pec <- case6_pec + 1 / ww
+            if (mx[i] == mx[j] && tiedpredIn == 1) {
+              concordant6.ties_pec <- concordant6.ties_pec + 0.5 / ww
+            }
             if (mx[i] < mx[j]) {
               concordant6_pec <- concordant6_pec + 1 / ww
             }
@@ -327,6 +339,7 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
        concordant5_pec = concordant5_pec,
        concordant5.ties_pec = concordant5.ties_pec,
        concordant6_pec = concordant6_pec,
+       concordant6.ties_pec = concordant6.ties_pec,
        
        total_concordant = concordant1 + concordant2 + concordant3 +
          concordant4 + concordant5 + concordant6 + concordant7 +
@@ -419,7 +432,7 @@ concordantpec <- function(MyC) {
   MyC$concordant1_pec + MyC$concordant1.ties_pec +
     MyC$concordant2_pec + MyC$concordant2.ties_pec +
     MyC$concordant5_pec + MyC$concordant5.ties_pec +
-    MyC$concordant6_pec
+    MyC$concordant6_pec + MyC$concordant6.ties_pec
 }
 ## Adaptation of SurvMetrics function to break the calculation into cases
 Cindex_aux <- function(object, predicted) 
@@ -704,18 +717,18 @@ MyC <- calculate.pairs.ties(d.time, death, age, eval.times = max(d.time))
 ## Hmisc - OK
 C1 <- Hmisc::rcorr.cens(-age, Surv(d.time, death))
 comparableHmisc(MyC)
-C1["Relevant Pairs"] # OK
+C1["Relevant Pairs"]/2# OK
 concordantHmisc(MyC)
-C1["Concordant"] # OK
+C1["Concordant"]/2 # OK
 uncertainHmisc(MyC)
-C1["Uncertain"] # OK
+C1["Uncertain"]/2 # OK
 
 ## SurvMetrics - OK
 C2 <- Cindex_aux(Surv(d.time, death), predicted = -age) # OK
 C2$Concordant + C2$ConcordantTies # This is half of the concordant pairs in Hmisc
-concordantSurvMetrics(MyC) / 2
+concordantSurvMetrics(MyC) 
 C2$Comparable   # This is half of the comparable pairs in Hmisc
-comparableSurvMetrics(MyC) / 2
+comparableSurvMetrics(MyC)
 # This is half of the comparable ties in Hmisc
 SurvMetrics::Cindex(Surv(d.time, death), predicted = -age)
 concordantSurvMetrics(MyC) / comparableSurvMetrics(MyC) # OK
@@ -723,16 +736,16 @@ concordantSurvMetrics(MyC) / comparableSurvMetrics(MyC) # OK
 ## Survival - OK
 C3 <- survival::concordance(Surv(d.time, death) ~ age, timewt = "n", reverse = TRUE)
 C3$count[["concordant"]] # OK
-concordantSurvival(MyC) / 2 # OK
+concordantSurvival(MyC)  # OK
 C3$count[["concordant"]] + C3$count[["discordant"]] 
-comparableSurvival(MyC) / 2
+comparableSurvival(MyC)
 concordantSurvival(MyC)/comparableSurvival(MyC)
 
 ## Lifelines, we the same as in Survival 
 C4 <- lifelinesR(d.time, age, death)
-concordantlifelines(MyC)/2
+concordantlifelines(MyC)
 C4$concordant + C4$tied*0.5
-comparablelifelines(MyC)/2
+comparablelifelines(MyC)
 C4$comparable
 (C4$concordant + C4$tied*0.5) / C4$comparable
 C4$Cindex
@@ -742,10 +755,10 @@ C5 <- sksurv.censoredR(d.time, age, death)
 C5$Cindex
 C5$concordant / (C5$concordant + C5$discordant)
 C5$concordant
-#C5$tied_risk
-concordantsksurv(MyC)/2
-comparablesksurv(MyC)/2
 C5$concordant + C5$discordant
+#C5$tied_risk
+concordantsksurv(MyC)
+comparablesksurv(MyC)
 #C5$last_tied_time
 
 ## pec: 
@@ -759,9 +772,12 @@ pec_true <- pec::cindex(
   cens.model = "marginal", # default marginal
 )
 pec_true$AppCindex$res
-pec_true$Concordant$res/2
+pec_true$Concordant$res / 2
 pec_true$Pairs$res/2
 
+
+MyC <- calculate.pairs.ties(d.time, death, age, eval.times = max(d.time), 
+                            tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
 # my translation to R
 pec2 <- cindexSRC_R(Y = d.time, status = death, times = eval.times, 
             pred = age, tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
@@ -769,8 +785,8 @@ pec2$Cindex
 pec2$concordant
 pec2$comparable
 
-concordantpec(MyC)/2
-comparablepec(MyC)/2
+concordantpec(MyC)
+comparablepec(MyC)
 concordantpec(MyC) / comparablepec(MyC)
 
 
@@ -784,18 +800,18 @@ MyC <- calculate.pairs.ties(d.time.ties1, death.ties1, age, eval.times = max(d.t
 # Hmisc - OK
 C1 <- rcorr.cens(-age, Surv(d.time.ties1, death.ties1))
 comparableHmisc(MyC)
-C1["Relevant Pairs"] # OK
+C1["Relevant Pairs"]/2 # OK
 concordantHmisc(MyC)
-C1["Concordant"] # OK
+C1["Concordant"]/2 # OK
 uncertainHmisc(MyC)
-C1["Uncertain"] # OK
+C1["Uncertain"]/2 # OK
 
 ## SurvMetrics - OK
 C2 <- Cindex_aux(Surv(d.time.ties1, death.ties1), predicted = -age) # OK
 C2$Concordant + C2$ConcordantTies # This is half of the concordant pairs in Hmisc
-concordantSurvMetrics(MyC) / 2
+concordantSurvMetrics(MyC) 
 C2$Comparable   # This is half of the comparable pairs in Hmisc
-comparableSurvMetrics(MyC) / 2
+comparableSurvMetrics(MyC) 
 # This is half of the comparable ties in Hmisc
 SurvMetrics::Cindex(Surv(d.time.ties1, death.ties1), predicted = -age)
 concordantSurvMetrics(MyC) / comparableSurvMetrics(MyC) # OK
@@ -803,16 +819,16 @@ concordantSurvMetrics(MyC) / comparableSurvMetrics(MyC) # OK
 ## Survival - OK but need to remove case 5 from the table
 C3 <- survival::concordance(Surv(d.time.ties1, death.ties1) ~ age, timewt = "n", reverse = TRUE)
 C3$count[["concordant"]] # OK
-concordantSurvival(MyC) / 2 
+concordantSurvival(MyC)  
 C3$count[["concordant"]] + C3$count[["discordant"]] # OK
-comparableSurvival(MyC) / 2
+comparableSurvival(MyC)
 C3$concordance # OK
 concordantSurvival(MyC) / comparableSurvival(MyC) 
 
 ## Lifelines, same results as survival
 C4 <- lifelinesR(d.time.ties1, age, death.ties1)
-concordantlifelines(MyC)/2
-comparablelifelines(MyC)/2
+concordantlifelines(MyC)
+comparablelifelines(MyC)
 C4$concordant + C4$tied*0.5
 C4$comparable
 (C4$concordant + C4$tied*0.5) / C4$comparable
@@ -821,11 +837,11 @@ C4$Cindex
 ## Sksurv
 C5 <- sksurv.censoredR(d.time.ties1, age, death.ties1)
 C5$Cindex
-(concordantsksurv(MyC)/2) / (comparablesksurv(MyC)/2)
+concordantsksurv(MyC) / comparablesksurv(MyC)
 C5$concordant / (C5$concordant + C5$discordant)
-concordantsksurv(MyC)/2
+concordantsksurv(MyC)
 C5$concordant
-comparablesksurv(MyC)/2
+comparablesksurv(MyC)
 C5$concordant + C5$discordant
 C5$tied_risk
 
@@ -850,34 +866,34 @@ pec2$Cindex
 pec2$concordant
 pec2$comparable
 
-concordantpec(MyC)/2
-comparablepec(MyC)/2
+MyC <- calculate.pairs.ties(d.time.ties1, death.ties1, age, eval.times = max(d.time.ties1),
+                            tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
+
+concordantpec(MyC)
+comparablepec(MyC)
 concordantpec(MyC) / comparablepec(MyC)
-
-
-### left here with pec!
 
 
 # Setting 3: ties in time (cens or uncensored)
 d.time.ties2 <- round(d.time, 1)
 
-MyC <- calculate.pairs.ties(d.time.ties2, death, age)
+MyC <- calculate.pairs.ties(d.time.ties2, death, age,  eval.times = max(d.time.ties2))
 
 ## Hmisc - OK
 C1 <- rcorr.cens(-age, Surv(d.time.ties2, death))
 comparableHmisc(MyC)
-C1["Relevant Pairs"] # OK
+C1["Relevant Pairs"] / 2 # OK
 concordantHmisc(MyC)
-C1["Concordant"] # OK
+C1["Concordant"] / 2# OK
 uncertainHmisc(MyC)
-C1["Uncertain"] # OK
+C1["Uncertain"] / 2 # OK
 
 ## SurvMetrics - OK if we count case 6B as partially concordant (which I think doesn't make sense)
 C2 <- Cindex_aux(Surv(d.time.ties2, death), predicted = -age)
 C2$Concordant + C2$ConcordantTies  # OK
-concordantSurvMetrics(MyC) / 2 + MyC$concordant6.survmetrics / 2 # OK
+concordantSurvMetrics(MyC)+ MyC$concordant6.survmetrics  # OK
 C2$Comparable   # OK
-comparableSurvMetrics(MyC) / 2 # OK
+comparableSurvMetrics(MyC) # OK
 SurvMetrics::Cindex(Surv(d.time.ties2, death), predicted = -age)
 (concordantSurvMetrics(MyC) + MyC$concordant6.survmetrics) / comparableSurvMetrics(MyC) # OK
 # Check example pairs - this suggests there is a bug or a weird treatment of ties
@@ -889,9 +905,9 @@ cbind(d.time.ties2, death, age)[mypair,]
 ## Survival - OK but need to remove case 5 from the table
 C3 <- survival::concordance(Surv(d.time.ties2, death) ~ age, timewt = "n", reverse = TRUE)
 C3$count[["concordant"]] # OK
-concordantSurvival(MyC) / 2 
+concordantSurvival(MyC) 
 C3$count[["concordant"]] + C3$count[["discordant"]] # OK
-comparableSurvival(MyC) / 2
+comparableSurvival(MyC) 
 C3$concordance # OK
 concordantSurvival(MyC) / comparableSurvival(MyC) 
 
@@ -902,9 +918,9 @@ somer <- (C3$count[["concordant"]] - C3$count[["discordant"]])/ npair
 
 ## Lifelines
 C4 <- lifelinesR(d.time.ties2, age, death)
-concordantlifelines(MyC)/2
+concordantlifelines(MyC)
 C4$concordant
-comparablelifelines(MyC)/2
+comparablelifelines(MyC)
 C4$comparable
 (C4$concordant + C4$tied*0.5) / C4$comparable
 C4$Cindex
@@ -912,52 +928,81 @@ C4$Cindex
 ## sksurv
 C5 <- sksurv.censoredR(d.time.ties2, age, death)
 C5$Cindex
-(concordantsksurv(MyC)/2) / (comparablesksurv(MyC)/2)
+(concordantsksurv(MyC)) / (comparablesksurv(MyC))
 C5$concordant / (C5$concordant + C5$discordant)
-concordantsksurv(MyC)/2
+concordantsksurv(MyC)
 C5$concordant
-comparablesksurv(MyC)/2
+comparablesksurv(MyC)
 C5$concordant + C5$discordant
 C5$tied_risk
+
+## pec: 
+tmp <- data.frame(age, death, d.time.ties2)
+eval.times <- max(d.time.ties2)
+pec_true <- pec::cindex(
+  list("res" = as.matrix(1 - age)),
+  formula = Hist(d.time.ties2, death) ~ 1, 
+  data = tmp, 
+  eval.times = eval.times,
+  cens.model = "marginal", # default marginal
+)
+pec_true$AppCindex$res
+pec_true$Concordant$res/2
+pec_true$Pairs$res/2
+
+# my translation to R 
+pec2 <- cindexSRC_R(Y = d.time.ties2, status = death, times = eval.times, 
+                    pred = age, tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
+pec2$Cindex
+pec2$concordant
+pec2$comparable 
+
+MyC <- calculate.pairs.ties(d.time.ties2, death, age, eval.times = eval.times,
+                            tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
+
+concordantpec(MyC)
+comparablepec(MyC)
+concordantpec(MyC) / comparablepec(MyC)
+
 
 # Setting 4: ties in predictions only
 age_round <- round(age, 1)
 
-MyC <- calculate.pairs.ties(d.time, death, age_round)
+MyC <- calculate.pairs.ties(d.time, death, age_round, eval.times = max(d.time))
 
 # Hmisc - OK
 C1 <- rcorr.cens(-age_round, Surv(d.time, death))
 comparableHmisc(MyC)
-C1["Relevant Pairs"] # OK
+C1["Relevant Pairs"]/2 # OK
 concordantHmisc(MyC)
-C1["Concordant"] # OK
+C1["Concordant"]/2 # OK
 uncertainHmisc(MyC)
-C1["Uncertain"] # OK
+C1["Uncertain"]/2 # OK
 
 # Hmisc - exclude ties
 C1 <- rcorr.cens(-age_round, Surv(d.time, death), outx = TRUE)
 comparableHmisc(MyC) - MyC$case1.ties - MyC$case2.ties - MyC$case6.ties
-C1["Relevant Pairs"] # OK
+C1["Relevant Pairs"]/2 # OK
 concordantHmisc(MyC) - MyC$concordant1.ties - MyC$concordant2.ties - MyC$concordant6.ties
-C1["Concordant"] # OK
+C1["Concordant"]/2 # OK
 uncertainHmisc(MyC)
-C1["Uncertain"] # Not OK, but irrelevant for the Cindex (I just need to calculate the diff)
+C1["Uncertain"]/2 # Not OK, but irrelevant for the Cindex (I just need to calculate the diff)
 
 ## SurvMetrics - OK
 C2 <- Cindex_aux(Surv(d.time, death), predicted = -age_round) 
 C2$Concordant + C2$ConcordantTies # This is half of the comparable pairs in Hmisc
-concordantSurvMetrics(MyC) / 2
+concordantSurvMetrics(MyC) 
 C2$Comparable # This is half of the comparable pairs in Hmisc
-comparableSurvMetrics(MyC) / 2 # This is half of the comparable ties in Hmisc
+comparableSurvMetrics(MyC) # This is half of the comparable ties in Hmisc
 SurvMetrics::Cindex(Surv(d.time, death), predicted = -age_round)
 concordantSurvMetrics(MyC) / comparableSurvMetrics(MyC) # OK
 
 ## Survival - OK
 C3 <- survival::concordance(Surv(d.time, death) ~ age_round, timewt = "n", reverse = TRUE)
 C3$count[["concordant"]] + C3$count[["tied.x"]] / 2 # OK
-concordantSurvival(MyC) / 2 
+concordantSurvival(MyC)
 C3$count[["concordant"]] + C3$count[["discordant"]] + C3$count[["tied.x"]]
-comparableSurvival(MyC) / 2
+comparableSurvival(MyC) 
 C3$concordance # OK
 concordantSurvival(MyC) / comparableSurvival(MyC) 
 
@@ -968,9 +1013,9 @@ somer <- (C3$count[["concordant"]] - C3$count[["discordant"]])/ npair
 
 ## Lifelines
 C4 <- lifelinesR(d.time, age_round, death)
-concordantlifelines(MyC)/2
+concordantlifelines(MyC)
 C4$concordant + C4$tied*0.5
-comparablelifelines(MyC)/2
+comparablelifelines(MyC)
 C4$comparable
 (C4$concordant + C4$tied*0.5) / C4$comparable
 C4$Cindex
@@ -983,50 +1028,78 @@ C5 <- sksurv.censoredR(d.time, age_round, death)
 C5$Cindex
 (concordantsksurv(MyC)/2) / (comparablesksurv(MyC)/2)
 (C5$concordant + C5$tied_risk * 0.5) / (C5$concordant + C5$discordant + C5$tied_risk)
-concordantsksurv(MyC)/2
+concordantsksurv(MyC)
 (C5$concordant + C5$tied_risk * 0.5)
-comparablesksurv(MyC)/2
+comparablesksurv(MyC)
 C5$concordant + C5$discordant + C5$tied_risk
 C5$tied_risk
 
+## pec: 
+tmp <- data.frame(age_round, death, d.time)
+eval.times <- max(d.time)
+pec_true <- pec::cindex(
+  list("res" = as.matrix(1 - age_round)),
+  formula = Hist(d.time, death) ~ 1, 
+  data = tmp, 
+  eval.times = eval.times,
+  cens.model = "marginal", # default marginal
+)
+pec_true$AppCindex$res
+pec_true$Concordant$res/2
+pec_true$Pairs$res/2
+
+# my translation to R (not sure why it does not match)
+pec2 <- cindexSRC_R(Y = d.time, status = death, times = eval.times, 
+                    pred = age_round, tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
+pec2$Cindex
+pec2$concordant
+pec2$comparable 
+
+# it matches with the real pec
+MyC <- calculate.pairs.ties(d.time, death, age_round, eval.times = eval.times,
+                            tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
+
+concordantpec(MyC)
+comparablepec(MyC)
+concordantpec(MyC) / comparablepec(MyC)
 
 
 # Setting 5: ties in times or predictions (but not both)
-MyC <- calculate.pairs.ties(d.time.ties2, death, age_round)
+MyC <- calculate.pairs.ties(d.time.ties2, death, age_round, eval.times = max(d.time.ties2))
 
 # Hmisc - OK
 C1 <- rcorr.cens(-age_round, Surv(d.time.ties2, death))
 comparableHmisc(MyC)
-C1["Relevant Pairs"] # OK
+C1["Relevant Pairs"] /2# OK
 concordantHmisc(MyC)
-C1["Concordant"] # OK
+C1["Concordant"] /2# OK
 uncertainHmisc(MyC)
-C1["Uncertain"] # OK
+C1["Uncertain"] /2# OK
 
 ## SurvMetrics - OK if I include case 6B as partially concordant (which I think doesn't make sense)
 C2 <- Cindex_aux(Surv(d.time.ties2, death), predicted = -age_round)
 C2$Concordant + C2$ConcordantTies 
 # This only matches if I expand the partially concordant pairs (which doesn't make sense)
-concordantSurvMetrics(MyC) / 2 + MyC$concordant6.survmetrics / 2
+concordantSurvMetrics(MyC)  + MyC$concordant6.survmetrics 
 C2$Comparable # This is half of the comparable pairs in Hmisc
-comparableSurvMetrics(MyC) / 2 # This is half of the comparable ties in Hmisc
+comparableSurvMetrics(MyC)  # This is half of the comparable ties in Hmisc
 SurvMetrics::Cindex(Surv(d.time.ties2, death), predicted = -age_round)
 (concordantSurvMetrics(MyC) + MyC$concordant6.survmetrics) / comparableSurvMetrics(MyC) # OK
 
 ## Survival 
 C3 <- survival::concordance(Surv(d.time.ties2, death) ~ age_round, timewt = "n", reverse = TRUE)
 C3$count[["concordant"]] + C3$count[["tied.x"]] / 2 # OK
-concordantSurvival(MyC) / 2 
+concordantSurvival(MyC) 
 C3$count[["concordant"]] + C3$count[["discordant"]] + C3$count[["tied.x"]]
-comparableSurvival(MyC) / 2
+comparableSurvival(MyC) 
 C3$concordance # OK
 concordantSurvival(MyC) / comparableSurvival(MyC) 
 
 ## Lifelines
 C4 <- lifelinesR(d.time.ties2, age_round, death)
-concordantlifelines(MyC)/2
+concordantlifelines(MyC)
 (C4$concordant + C4$tied*0.5)
-comparablelifelines(MyC)/2
+comparablelifelines(MyC)
 C4$comparable
 (C4$concordant + C4$tied*0.5) / C4$comparable
 C4$Cindex
@@ -1034,13 +1107,44 @@ C4$Cindex
 ## sksurv
 C5 <- sksurv.censoredR(d.time.ties2, age_round, death)
 C5$Cindex
-(concordantsksurv(MyC)/2) / (comparablesksurv(MyC)/2)
+(concordantsksurv(MyC)) / (comparablesksurv(MyC))
 (C5$concordant + C5$tied_risk * 0.5) / (C5$concordant + C5$discordant + C5$tied_risk)
-concordantsksurv(MyC)/2
+concordantsksurv(MyC)
 (C5$concordant + C5$tied_risk * 0.5)
-comparablesksurv(MyC)/2
+comparablesksurv(MyC)
 C5$concordant + C5$discordant + C5$tied_risk
 C5$tied_risk
+
+## pec: 
+tmp <- data.frame(age_round, death, d.time.ties2)
+eval.times <- max(d.time.ties2)
+pec_true <- pec::cindex(
+  list("res" = as.matrix(1 - age_round)),
+  formula = Hist(d.time.ties2, death) ~ 1, 
+  data = tmp, 
+  eval.times = eval.times,
+  cens.model = "marginal", # default marginal
+)
+pec_true$AppCindex$res
+pec_true$Concordant$res/2
+pec_true$Pairs$res/2
+
+# my translation to R (not sure why this does not match)
+pec2 <- cindexSRC_R(Y = d.time.ties2, status = death, times = eval.times, 
+                    pred = age_round, tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
+pec2$Cindex
+pec2$concordant
+pec2$comparable 
+
+# Matches with the original pec
+MyC <- calculate.pairs.ties(d.time.ties2, death, age_round, eval.times = eval.times,
+                            tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
+
+concordantpec(MyC)
+comparablepec(MyC)
+concordantpec(MyC) / comparablepec(MyC)
+
+
 
 # Setting 6: ties in times and predictions (simultaneously)
 d.time.both <- c(d.time, rep(seq(0.1, 1.9, length.out = 10), each = 2))
@@ -1048,40 +1152,40 @@ death.both <- c(death, c(rep(c(1, 1), times = 3), rep(c(1, 0), times = 3),
                          rep(c(0, 1), times = 2), rep(c(0, 0), times = 2)))
 age.both <- c(age, rep(seq(30, 70, length.out = 10), each = 2))
 
-MyC <- calculate.pairs.ties(d.time.both, death.both, age.both)
+MyC <- calculate.pairs.ties(d.time.both, death.both, age.both, eval.times = max(d.time.both))
 
 # Hmisc - OK
 C1 <- rcorr.cens(-age.both, Surv(d.time.both, death.both))
 comparableHmisc(MyC)
-C1["Relevant Pairs"] # OK
+C1["Relevant Pairs"]/2 # OK
 concordantHmisc(MyC)
-C1["Concordant"] # OK
+C1["Concordant"] /2# OK
 uncertainHmisc(MyC)
-C1["Uncertain"] # OK
+C1["Uncertain"] /2# OK
 
 ## SurvMetrics - OK
 C2 <- Cindex_aux(Surv(d.time.both, death.both), predicted = -age.both)
 C2$Concordant + C2$ConcordantTies # 
-concordantSurvMetrics(MyC) / 2 + MyC$concordant6.survmetrics / 2
+concordantSurvMetrics(MyC)+ MyC$concordant6.survmetrics 
 C2$Comparable # This is half of the comparable pairs in Hmisc
-comparableSurvMetrics(MyC) / 2 # This is half of the comparable ties in Hmisc
+comparableSurvMetrics(MyC) # This is half of the comparable ties in Hmisc
 SurvMetrics::Cindex(Surv(d.time.both, death.both), predicted = -age.both)
 (concordantSurvMetrics(MyC) + MyC$concordant6.survmetrics) / comparableSurvMetrics(MyC) # OK
 
 ## Survival 
 C3 <- survival::concordance(Surv(d.time.both, death.both) ~ age.both, timewt = "n", reverse = TRUE)
-C3$count[["concordant"]] + C3$count[["tied.x"]] / 2 # OK
-concordantSurvival(MyC) / 2 
+C3$count[["concordant"]] + C3$count[["tied.x"]] /2# OK
+concordantSurvival(MyC) 
 C3$count[["concordant"]] + C3$count[["discordant"]] + C3$count[["tied.x"]]
-comparableSurvival(MyC) / 2
+comparableSurvival(MyC)
 C3$concordance # OK
 concordantSurvival(MyC) / comparableSurvival(MyC) 
 
 ## Lifelines
 C4 <- lifelinesR(d.time.both,  age.both, death.both)
-concordantlifelines(MyC)/2
+concordantlifelines(MyC)
 (C4$concordant + C4$tied*0.5)
-comparablelifelines(MyC)/2
+comparablelifelines(MyC)
 C4$comparable
 (C4$concordant + C4$tied*0.5) / C4$comparable
 C4$Cindex
@@ -1089,11 +1193,41 @@ C4$Cindex
 ## sksurv
 C5 <- sksurv.censoredR(d.time.both,  age.both, death.both)
 C5$Cindex
-(concordantsksurv(MyC)/2) / (comparablesksurv(MyC)/2)
+(concordantsksurv(MyC)) / (comparablesksurv(MyC))
 (C5$concordant + C5$tied_risk * 0.5) / (C5$concordant + C5$discordant + C5$tied_risk)
-concordantsksurv(MyC)/2
+concordantsksurv(MyC)
 (C5$concordant + C5$tied_risk * 0.5)
-comparablesksurv(MyC)/2
+comparablesksurv(MyC)
 C5$concordant + C5$discordant + C5$tied_risk
 C5$tied_risk
+
+## pec: 
+tmp <- data.frame(age.both, death.both, d.time.both)
+eval.times <- max(d.time.both)
+pec_true <- pec::cindex(
+  list("res" = as.matrix(1 - age.both)),
+  formula = Hist(d.time.both, death.both) ~ 1, 
+  data = tmp, 
+  eval.times = eval.times,
+  cens.model = "marginal", # default marginal
+)
+pec_true$AppCindex$res
+pec_true$Concordant$res/2
+pec_true$Pairs$res/2
+
+# my translation to R (not sure why this does not match)
+pec2 <- cindexSRC_R(Y = d.time.both, status = death.both, times = eval.times, 
+                    pred = age.both, tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
+pec2$Cindex
+pec2$concordant
+pec2$comparable 
+
+# Matches with the original pec
+MyC <- calculate.pairs.ties(d.time.both, death.both, age.both, eval.times = eval.times,
+                            tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
+
+concordantpec(MyC)
+comparablepec(MyC)
+concordantpec(MyC) / comparablepec(MyC)
+
 
