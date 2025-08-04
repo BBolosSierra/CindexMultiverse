@@ -226,15 +226,17 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
           wj <- weight_j[tindex[i]] ## is this or j ?
           ww <- wi * wj
           if ((time[i] <= eval.times) & (wi > 0 && wj > 0)) {
-            if (tiedoutcomeIn == 1) {  
+            if (mx[i] == mx[j]) {
+              if (tiedmatchIn == 1) {
+                case5_pec <- case5_pec + 1 / ww
+                concordant5_pec <- concordant5_pec + 1 / ww
+              } else if (tiedpredIn == 1 && tiedoutcomeIn == 1) {
+                case5_pec <- case5_pec + 1 / ww
+                concordant5.ties_pec <- concordant5.ties_pec + 0.5 / ww
+              }
+            } else if (tiedoutcomeIn == 1) {
               case5_pec <- case5_pec + 1 / ww
-              if (mx[i] == mx[j]) {
-                if (tiedmatchIn == 1) {
-                  concordant5_pec <- concordant5_pec + 1 / ww
-                } else if (tiedpredIn == 1) {
-                  concordant5_pec <- concordant5_pec + 0.5 / ww
-                }
-              } else if (mx[i] > mx[j]) {
+              if (mx[i] > mx[j]) {
                 concordant5_pec <- concordant5_pec + 1 / ww
               }
             }
@@ -258,11 +260,12 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
           
           ww <- wi * wj
           if ((time[i] <= eval.times) & (wi > 0 && wj > 0)) {
-            case6_pec <- case6_pec + 1 / ww
             if (mx[i] > mx[j]) {
+              case6_pec <- case6_pec + 1 / ww
               concordant6_pec <- concordant6_pec + 1 / ww
             }
             if (mx[i] == mx[j] && tiedpredIn == 1) {
+              case6_pec <- case6_pec + 1 / ww
               concordant6.ties_pec <- concordant6.ties_pec + 0.5 / ww
             }
           }
@@ -283,11 +286,12 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
           
           ww <- wi * wj
           if ((time[j] <= eval.times) & (wi > 0 && wj > 0)) {
-            case6_pec <- case6_pec + 1 / ww
             if (mx[i] == mx[j] && tiedpredIn == 1) {
+              case6_pec <- case6_pec + 1 / ww
               concordant6.ties_pec <- concordant6.ties_pec + 0.5 / ww
             }
             if (mx[i] < mx[j]) {
+              case6_pec <- case6_pec + 1 / ww
               concordant6_pec <- concordant6_pec + 1 / ww
             }
           }
@@ -1525,4 +1529,5 @@ C5$tied_risk
 
 ## pec: 
 pec_loop(d.time.both, death.both, age.both, MyC)
+
 
