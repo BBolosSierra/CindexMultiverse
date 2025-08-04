@@ -226,15 +226,17 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
           wj <- weight_j[tindex[i]] ## is this or j ?
           ww <- wi * wj
           if ((time[i] <= eval.times) & (wi > 0 && wj > 0)) {
-            if (tiedoutcomeIn == 1) {  
+            if (mx[i] == mx[j]) {
+              if (tiedmatchIn == 1) {
+                case5_pec <- case5_pec + 1 / ww
+                concordant5_pec <- concordant5_pec + 1 / ww
+              } else if (tiedpredIn == 1 && tiedoutcomeIn == 1) {
+                case5_pec <- case5_pec + 1 / ww
+                concordant5.ties_pec <- concordant5.ties_pec + 0.5 / ww
+              }
+            } else if (tiedoutcomeIn == 1) {
               case5_pec <- case5_pec + 1 / ww
-              if (mx[i] == mx[j]) {
-                if (tiedmatchIn == 1) {
-                  concordant5_pec <- concordant5_pec + 1 / ww
-                } else if (tiedpredIn == 1) {
-                  concordant5_pec <- concordant5_pec + 0.5 / ww
-                }
-              } else if (mx[i] > mx[j]) {
+              if (mx[i] > mx[j]) {
                 concordant5_pec <- concordant5_pec + 1 / ww
               }
             }
@@ -258,11 +260,12 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
           
           ww <- wi * wj
           if ((time[i] <= eval.times) & (wi > 0 && wj > 0)) {
-            case6_pec <- case6_pec + 1 / ww
             if (mx[i] > mx[j]) {
+              case6_pec <- case6_pec + 1 / ww
               concordant6_pec <- concordant6_pec + 1 / ww
             }
             if (mx[i] == mx[j] && tiedpredIn == 1) {
+              case6_pec <- case6_pec + 1 / ww
               concordant6.ties_pec <- concordant6.ties_pec + 0.5 / ww
             }
           }
@@ -283,11 +286,12 @@ calculate.pairs.ties <- function(time, delta, mx, eval.times,
           
           ww <- wi * wj
           if ((time[j] <= eval.times) & (wi > 0 && wj > 0)) {
-            case6_pec <- case6_pec + 1 / ww
             if (mx[i] == mx[j] && tiedpredIn == 1) {
+              case6_pec <- case6_pec + 1 / ww
               concordant6.ties_pec <- concordant6.ties_pec + 0.5 / ww
             }
             if (mx[i] < mx[j]) {
+              case6_pec <- case6_pec + 1 / ww
               concordant6_pec <- concordant6_pec + 1 / ww
             }
           }
@@ -1209,18 +1213,21 @@ pec_true <- pec::cindex(
   formula = Hist(d.time.both, death.both) ~ 1, 
   data = tmp, 
   eval.times = eval.times,
-  cens.model = "marginal", # default marginal
+  cens.model = "marginal", 
+  tiedpredIn = TRUE,
+  tiedMatchIn = TRUE,
+  tiedOutcomeIn = TRUE# default marginal
 )
 pec_true$AppCindex$res
 pec_true$Concordant$res/2
 pec_true$Pairs$res/2
 
-# my translation to R (not sure why this does not match)
-pec2 <- cindexSRC_R(Y = d.time.both, status = death.both, times = eval.times, 
+#my translation to R (not sure why this does not match)
+pec2 <- cindexSRC_R(Y = d.time.both, status = death.both, times = eval.times,
                     pred = age.both, tiedpredIn = 1, tiedoutcomeIn = 1, tiedmatchIn = 1)
 pec2$Cindex
 pec2$concordant
-pec2$comparable 
+pec2$comparable
 
 # Matches with the original pec
 MyC <- calculate.pairs.ties(d.time.both, death.both, age.both, eval.times = eval.times,
