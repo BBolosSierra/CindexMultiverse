@@ -21,7 +21,6 @@ library(pec)
 library(survival)
 library(rhdf5)
 library(randomForestSRC)
-library(survAUC)
 library(Hmisc)
 library(dplyr)
 # Plotting
@@ -293,7 +292,8 @@ for (i in seq_along(datasets)){
 
 
 #saveRDS(stacked_predictions, "./Results/InformativeSyntheticStackedPredictions.rds")
-#stacked_predictions <- readRDS( "./Results/WeibullSyntheticStackedPredictions.rds")
+
+stacked_predictions <- readRDS( "./Results/InformativeSyntheticStackedPredictions.rds")
 #stacked_predictions <- readRDS( "./Results/WeibullSyntheticStackedPredictions_v2.rds")
 ```
 
@@ -615,7 +615,7 @@ oracle_means <- dat_plot |>
   filter(Model == "Oracle") |>
   group_by(Implementation, Measure) |>
   summarise(
-    oracle_mean = mean(Cindex, na.rm = TRUE),
+    oracle_mean = median(Cindex, na.rm = TRUE),
     oracle_sd   = sd(Cindex, na.rm = TRUE),
     .groups = "drop"
   )

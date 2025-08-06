@@ -21,7 +21,6 @@ library(pec)
 library(survival)
 library(rhdf5)
 library(randomForestSRC)
-library(survAUC)
 library(Hmisc)
 library(dplyr)
 # Plotting
@@ -608,7 +607,7 @@ ggplot(final_df,
 ```
 
 
-```{r Plot with oracle, fig.width=8 fig.height=9}
+```{r Plot with oracle, fig.width=8, fig.height=9}
 
 dat_plot <- final_df[(final_df$Metric %in% c("Hmisc::rcorr.cens", "pec::cindex", "pycox.Ant")),]
 
@@ -620,7 +619,7 @@ oracle_means <- dat_plot |>
   filter(Model == "Oracle") |>
   group_by(Implementation, Measure) |>
   summarise(
-    oracle_mean = mean(Cindex, na.rm = TRUE),
+    oracle_mean = median(Cindex, na.rm = TRUE),
     oracle_sd   = sd(Cindex, na.rm = TRUE),
     .groups = "drop"
   )
@@ -658,6 +657,136 @@ ggplot(dat_plot[dat_plot$Model == "CoxPH", ],
   )
 
 ```
+
+```{r, fig.width=8, fig.height=9}
+# Filter relevant metrics
+dat_plot <- final_df %>%
+  filter(Metric %in% c("Hmisc::rcorr.cens", "pec::cindex", "pycox.Ant")) %>%
+  filter(!(Implementation == "Hmisc" & 
+           Measure == "tilde(C)[tau]~(RMST~tau==100~months)"))
+
+oracle_means <- dat_plot |>
+  filter(Model == "Oracle") |>
+  group_by(Implementation, Measure) |>
+  summarise(
+    oracle_mean = median(Cindex, na.rm = TRUE),
+    oracle_sd   = sd(Cindex, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Join back to get Oracle values for difference calculation
+dat_plot <- dat_plot %>%
+  left_join(oracle_means, by = c("Implementation", "Measure")) %>%
+  mutate(Cindex_diff = Cindex - oracle_mean)
+
+# Plot difference from Oracle for CoxPH only
+ggplot(dat_plot[dat_plot$Model == "CoxPH", ], 
+       aes(x = CP_Label, y = Cindex_diff, fill = Notation)) +
+  geom_violin(alpha = 0.2, color = "black") +
+  stat_summary(
+    fun = median, geom = "point", shape = 21,
+    size = 2, fill = "black", color = "black",
+    position = position_dodge(width = 0.9)
+  ) +
+  # Oracle SD band (now around 0)
+  geom_rect(
+    data = oracle_means,
+    aes(xmin = -Inf, xmax = Inf,
+        ymin = -oracle_sd, ymax = oracle_sd),
+    fill = "grey40", alpha = 0.1, inherit.aes = FALSE
+  ) +
+  # Oracle horizontal line (now at 0)
+  geom_hline(
+    yintercept = 0,
+    color = "black", linetype = "dashed", linewidth = 0.7
+  ) +
+  facet_wrap(~Implementation + Measure, labeller = label_parsed) +
+  scale_fill_discrete(labels = scales::parse_format()) +
+  labs(y = expression((C~index) - (C~index)^oracle), x = "Censoring percentage") +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
+```
+
+```{r fig.width=8, fig.height=9}
+# Step 1: Filter for relevant models and metrics
+df <- final_df %>%
+  filter(Model %in% c("CoxPH", "Oracle"),
+         Implementation %in% c("Hmisc", "pec", "pycox.Ant")) %>%
+  filter(!(Implementation == "Hmisc" & 
+           Measure == "tilde(C)[tau]~(RMST~tau==100~months)"))
+
+# Step 2: Make a unique identifier for each comparison group
+df$GroupID <- paste(df$Implementation, df$Measure, df$Dataset, df$Lambda, sep = "_")
+
+# Step 3: Reshape to wide format (CoxPH vs Oracle)
+df_wide <- reshape(
+  df[, c("GroupID", "Model", "Cindex")],
+  timevar = "Model",
+  idvar = "GroupID",
+  direction = "wide"
+)
+
+# Step 4: Parse out useful columns from GroupID
+group_split <- do.call(rbind, strsplit(df_wide$GroupID, "_"))
+df_wide$Implementation <- group_split[, 1]
+df_wide$Measure <- group_split[, 2]
+df_wide$Dataset <- group_split[, 3]
+df_wide$Lambda <- group_split[, 4]
+
+# Step 5: Compute difference: CoxPH - Oracle
+df_wide$CindexDiff <- df_wide$Cindex.CoxPH - df_wide$Cindex.Oracle
+
+# Step 6: Relabel Lambda -> Censoring percentage
+df_wide$DeltaCP_Label <- dplyr::case_when(
+  df_wide$Lambda == "0"   ~ "0%",
+  df_wide$Lambda == "0.5" ~ "14.2%–21.1%",
+  df_wide$Lambda == "1.5" ~ "30.8%–39.7%",
+  df_wide$Lambda == "3"   ~ "43.3%–51.2%",
+  df_wide$Lambda == "7"   ~ "58.4%–65.8%",
+  df_wide$Lambda == "13"  ~ "68.6%–75.7%",
+  TRUE ~ NA_character_
+)
+
+# Step 7: Add Notation labels
+df_wide$Notation <- dplyr::case_when(
+  df_wide$Implementation == "pec" ~ "tilde(C)[tau]~(RMST~tau)",
+  df_wide$Implementation == "pycox.Ant" ~ "tilde(C)[td]~(Survival~Distribution)",
+  df_wide$Implementation == "Hmisc" ~ "tilde(C)~(RMST)",
+  TRUE ~ NA_character_
+)
+
+# Step 8: Set colors
+pastel_colors <- c(
+  "tilde(C)[tau]~(RMST~tau)" = "#FB9A99",
+  "tilde(C)[td]~(Survival~Distribution)" = "#B2DF8A",
+  "tilde(C)~(RMST)" = "#A6CEE3"
+)
+
+# Step 9: Plot
+ggplot(df_wide, aes(x = as.factor(DeltaCP_Label), y = CindexDiff, fill = Notation)) +
+  geom_violin(alpha = 0.2, color = "black") +
+  stat_summary(fun = median, geom = "point", shape = 21, 
+               size = 2, fill = "black", color = "black", 
+               position = position_dodge(width = 0.9)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  facet_wrap(~Implementation + Measure, labeller = label_parsed) +
+  scale_fill_manual(values = pastel_colors, labels = scales::parse_format()) +
+  labs(
+    x = "Censoring percentage",
+    y = expression(C*"-index"^"CoxPH" - C*"-index"^"Oracle")
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
+```
+
 
 ```{r Plot subset, fig.width=8, fig.height=9}
 
@@ -806,7 +935,7 @@ df_pairs$survival.n.Concordant <- df_pairs$survival.n.CP
 ```
 
 
-```{r Ploting comparable concordant, fig.width=8, fig.height=10}
+```{r Ploting comparable concordant, fig.width=7, fig.height=6}
 # Reshape to long format
 df_long <- df_pairs[,
   c("survival.n.G2.Concordant", "survival.n.G2.Comparable", 
@@ -842,7 +971,7 @@ df_long$Group <- factor(df_long$Group, levels = c(
 facet_common <- facet_wrap(~Implementation + Measure, labeller = label_parsed)
 
 dat <- final_df[(final_df$Metric %in% c("survival.n", "survival.n/G2") & 
-                   (final_df$Measure %in% "tilde(C)[tau]~(RMST~tau==max*(T:~Delta==1))")),]
+                   (final_df$Measure %in% "tilde(C)[tau]~(RMST~tau==100~months)")),]
 
 
 lambda_label_map <- dat[, c("Lambda", "CP_Label")] |> 
@@ -869,7 +998,7 @@ p2 <- ggplot(dat,
 # Add CP_Label to df_long
 df_long <- df_long |>
   left_join(lambda_label_map, by = c("lambda" = "lambda_numeric"))
-df_long$Measure <- "tilde(C)[tau]~(RMST~tau==max*(T:~Delta==1))"
+df_long$Measure <- "tilde(C)[tau]~(RMST~tau==100~months)"
 
 p1 <- ggplot(df_long, aes(x = CP_Label, y = Value, color = PairType)) +
   geom_boxplot(alpha = 0.3, fill = "white", outlier.shape = NA, size = 0.7) +

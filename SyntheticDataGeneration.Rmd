@@ -20,12 +20,9 @@ library(pec)
 library(survival)
 library(rhdf5)
 library(randomForestSRC)
-library(survAUC)
 library(Hmisc)
 library(dplyr)
-# Plotting
 library(gridExtra)
-# Parallelization
 library(doFuture)
 library(future)
 library(progressr)
@@ -95,9 +92,7 @@ Where parameters estimated during the data generation such $gamma$ and $lambda$ 
 
 The 100 datasets are generated with the same survreg model. However, we are sampling 1000 patients, and therefore, we do have different covariates per dataset and event times. It is archived by varying the seed, and it is reproducible since all seeds are stored. The observed event times are calculated by including increasing levels of censoring. 
 For one dataset, we would have 5 versions of it, with increasing levels of censoring. 
-
 Since one dataset has the same original event times (although different observed times due to censoring), model parameters are kept throughout the process of increasing censoring, regardless of censoring mechanism generation.
-
 
 
 ```{r Load datasets}

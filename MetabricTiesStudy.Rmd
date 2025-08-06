@@ -13,7 +13,7 @@ rounding.
 In this section, we first load the required libraries:
 
 
-```{r Load libraries include=FALSE}
+```{r include=FALSE}
 # Survival metrics
 library(reticulate)
 library(arrow)
@@ -1106,7 +1106,7 @@ surv_df_plot <- make_surv_plot_entries(results_surv_bo, results_surv_pe)
 ```
 
 
-```{r Format and plot 2  fig.width=8, fig.height=9}
+```{r Format and plot 2  fig.width=8, fig.height=11}
 # Add notation
 surv_df_plot$Notation           <- "C_td"
 rmst_df_plot_incl_ties$Notation <- ifelse(rmst_df_plot_incl_ties$Metric == "pec::cindex", "C_tau_10", "C")
@@ -1115,7 +1115,7 @@ rmst_df_plot_excl_ties$Notation <- ifelse(rmst_df_plot_excl_ties$Metric == "pec:
 
 ## Add the tie not ties
 surv_df_plot$Incl.Ties.Preds <- ifelse(surv_df_plot$Metric == "pycox.Adj.Ant", 
-                                          "pycox.Adj.Ant*", "pycox.Ant")
+                                          "pycox*", "pycox")
 rmst_df_plot_incl_ties$Incl.Ties.Preds <- ifelse(
   rmst_df_plot_incl_ties$Metric == "pec::cindex", "pec*",
   ifelse(rmst_df_plot_incl_ties$Metric == "Hmisc::rcorr.cens", "Hmisc*",
@@ -1135,9 +1135,9 @@ df_plot$Rounding <- factor(df_plot$Model, levels = c("CoxPH", "CoxPH_round", "Co
 
 # Define manual order for display
 ordered_levels <- c(
-  "pycox.Ant", "pycox.Adj.Ant*",
-  "pec", "pec*",
-  "Hmisc", "Hmisc*",
+   "pycox","pycox*",
+  "pec","pec*",
+  "Hmisc","Hmisc*",
   "pysurvival", "pysurvival*"
 )
 
