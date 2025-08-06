@@ -3,3 +3,4 @@
 .RData
 .Ruserdata
 Results/InformativeSyntheticStackedPredictions.rds
+.DS_Store
