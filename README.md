@@ -52,7 +52,7 @@ docker rmi ghcr.io/bbolossierra/cindex_multiverse_project:1.0.2
 
 ### R libraries
 
-```bash
+
 | Package | Version |
 |---------|---------|
 | rhdf5 | 2.46.1 |
@@ -90,14 +90,9 @@ docker rmi ghcr.io/bbolossierra/cindex_multiverse_project:1.0.2
 | survivalmodels | 0.1.191 |
 | tidyverse | 2.0.0 |
 | cBioPortalData | 2.14.2 |
-|---------|---------|
 
-```
 
 ### Python packages
-
-
-```bash
 
 | Package           | Version  |
 |-------------------|----------|
@@ -108,6 +103,6 @@ docker rmi ghcr.io/bbolossierra/cindex_multiverse_project:1.0.2
 | scikit-survival   | 0.23.1   |
 | tqdm              | 4.67.1   |
 | numba             | 0.60.0   |
-|---------|---------|
 
-```
+
+
