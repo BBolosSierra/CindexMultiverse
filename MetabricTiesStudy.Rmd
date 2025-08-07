@@ -50,12 +50,19 @@ Sys.setenv(KMP_WARNINGS = "0")          # Disables OpenMP warnings
 Sys.setenv(OPENBLAS_NUM_THREADS = "1")  # Limits OpenBLAS to 1 thread
 
 # #Sys.setenv(NUMBA_DISABLE_JIT = "0")  
-# library(reticulate)
+#library(reticulate)
 
-#use_condaenv("/opt/homebrew/Caskroom/miniforge/base/envs/py-rstudio", required=TRUE)
+#use_condaenv("/opt/conda/envs/py-rstudio/bin/python", required=TRUE)
 #use_virtualenv("~/.virtualenvs/venv-DeSurv_python_R")
 #use_python("/opt/homebrew/Caskroom/miniforge/base/envs/venv-DeSurv3/bin/python3.9")
 #py_config()
+
+library(reticulate)
+
+use_condaenv("py-rstudio", required = TRUE)  # Uses env name, not full path
+py_config()  
+
+
 ```
 
 
@@ -93,7 +100,7 @@ names(mb)[names(mb) %in% names(var_map)] <- var_map[names(mb)[names(mb) %in% nam
 # Looking at the time
 summary(mb$time)
 # Order according to time and status
-mb[order(mb$time, -mb$status),]
+#mb[order(mb$time, -mb$status),]
 
 ```
 
@@ -174,7 +181,7 @@ For reproducibility across different models, we first generate bootstrap samples
 which will be shared across all models and with or without data rounding. 
 
 
-```{r Create bootstrap samples, eval=FALSE}
+```{r Create bootstrap samples}
 set.seed(123)
 
 # Number of bootstraps
@@ -193,7 +200,7 @@ resample_indices <- replicate(n_bootstraps,
 
 
 
-```{r Commented out}
+```{r Commented out, include=FALSE}
 # Bin test_time into 3-month intervals
 # stacked_predictions_B <- stacked_predictions
 # Get bin midpoints
@@ -488,14 +495,8 @@ rmst_pec_excl_ties_T2  <- make_rmst_plot_entries(results_rmst_bo_excl_ties_T2,
 rmst_pec_incl_ties_T2  <- make_rmst_plot_entries(results_rmst_bo_incl_ties_T2,  
                                                  results_rmst_pe_incl_ties_T2)
 
-rmst_pec_excl_ties_TT  <- make_rmst_plot_entries(results_rmst_bo_excl_ties_TT,
-                                                 results_rmst_pe_excl_ties_TT)
-rmst_pec_incl_ties_TT  <- make_rmst_plot_entries(results_rmst_bo_incl_ties_TT,  
-                                                 results_rmst_pe_incl_ties_TT)
-
 
 surv_df_plot    <- make_surv_plot_entries(results_surv_bo, results_surv_pe)
-surv_df_plot_TT <- make_surv_plot_entries(results_surv_bo_TT, results_surv_pe_TT)
 surv_df_plot_T2 <- make_surv_plot_entries(results_surv_bo_T2, results_surv_pe_T2)
 ```
 
@@ -539,7 +540,7 @@ df_plot <- bind_rows(surv_df_plot, rmst_pec_excl_ties, rmst_pec_incl_ties,
 ```
 
 
-```{r Plot}
+```{r Plot fig.width=8, fig.height=11}
 # Plot
 df_plot$Notation <- factor(df_plot$Notation,
   levels = c("C_tau_10", "C_td"),
@@ -623,7 +624,7 @@ We would create three different models based on increasing discretization of
 the age as covariates. After we would estimate the C-index with those 
 implementations where we can change the inclusion of ties in predictions based 
 on user-defined parameters. Those are pysurvival and Hmisc for $C$, pec for 
-$C_\tau$ and pycox for $C_\{td}$
+$C_\tau$ and pycox for $C_{td}$
 
 Here, we restart the environment and load the required libraries. 
 
@@ -694,13 +695,15 @@ names(mb)[names(mb) %in% names(var_map)] <- var_map[names(mb)[names(mb) %in% nam
 # Looking at the time
 summary(mb$time)
 # Order according to time and status
-mb[order(mb$time, -mb$status),]
+#mb[order(mb$time, -mb$status),]
+
 ```
 Next, we load the helper functions used throughout our analysis.
 
 ```{r Load functions}
 source("./CindexHelperFunctions.R")
 ```
+
 
 ## Age rounding
 
@@ -737,7 +740,7 @@ We will fit Cox PH models using age as the only covariate. Different models will
 be fitted using the raw values of age, as well as the two rounded age values 
 that were created in the previous section. 
 
-```{r 5foldCV, eval=FALSE}
+```{r 5foldCV}
 ## Reproducibility
 reset_torch_seed <- function(seed = 123) {
   reticulate::py_run_string(sprintf("
@@ -958,7 +961,7 @@ cat("% of tied pairs out of total possible pairs ", num_tied_pairs/n_total_pairs
 
 ```
 
-```{r Bootstrap sample generation, eval=FALSE}
+```{r Bootstrap sample generation}
 
 set.seed(123)
 # Number of bootstrapps
@@ -1106,7 +1109,7 @@ surv_df_plot <- make_surv_plot_entries(results_surv_bo, results_surv_pe)
 ```
 
 
-```{r Format and plot 2  fig.width=8, fig.height=11}
+```{r Format plot 2,  fig.width=8, fig.height=11}
 # Add notation
 surv_df_plot$Notation           <- "C_td"
 rmst_df_plot_incl_ties$Notation <- ifelse(rmst_df_plot_incl_ties$Metric == "pec::cindex", "C_tau_10", "C")
