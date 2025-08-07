@@ -48,17 +48,41 @@ RUN ARCH=$(uname -m) && \
     bash /tmp/miniconda.sh -b -p /opt/conda && \
     rm /tmp/miniconda.sh
     
+#ENV RETICULATE_PYTHON=/opt/conda/envs/py-rstudio/bin/python
+# Add conda to PATH
+#ENV PATH="/opt/conda/bin:$PATH"
 # Add conda to PATH
 ENV PATH="/opt/conda/bin:$PATH"
 
+ENV LD_LIBRARY_PATH="/opt/conda/envs/py-rstudio/lib:$LD_LIBRARY_PATH"
+
+#RUN conda create -n py-rstudio -c conda-forge --override-channels \
+#    python=3.9.21 -y
+    
 # Configure conda and create Python environment with packages
-RUN conda create -n py-rstudio -c conda-forge --override-channels \
-    python=3.10 numpy pandas pycox lifelines scikit-survival tqdm numba -y
+ENV CONDA_ALWAYS_YES=true
+
+# Create base environment
+RUN conda create -n py-rstudio python=3.9.21 -c conda-forge --override-channels
+
+# Install remaining packages via `conda run` so the env is properly used
+RUN conda run -n py-rstudio conda install -c conda-forge --override-channels \
+    numpy=2.0.2 pandas=2.2.3 tqdm=4.67.1 numba=0.60.0 lifelines=0.30.0 \
+    scikit-survival=0.23.1 openssl=3.2.0 h5py libcurl
+
+# Install pycox via pip (more stable)
+RUN conda run -n py-rstudio pip install torch torchtuples pycox==0.3.0 && \
+    mkdir -p /opt/conda/envs/py-rstudio/lib/python3.9/site-packages/pycox/datasets/data && \
+    chmod -R a+rwX /opt/conda/envs/py-rstudio/lib/python3.9/site-packages/pycox/datasets
+
 
 # Set default R library path
 ENV R_LIBS=/home/rstudio/app/r-lib
 RUN mkdir -p /home/rstudio/app/r-lib && \
     echo "R_LIBS=/home/rstudio/app/r-lib" >> /home/rstudio/app/.Renviron
+
+# Ensure reticulate uses the correct Python
+RUN echo "RETICULATE_PYTHON=/opt/conda/envs/py-rstudio/bin/python" >> /home/rstudio/app/.Renviron
 
 RUN install2.r --error remotes \ 
     BiocManager \
@@ -77,8 +101,7 @@ RUN R CMD build pysurvivalR && \
 COPY install_packages.R ./
 RUN Rscript install_packages.R
 
-# Point reticulate to the right Python binary
-RUN echo "RETICULATE_PYTHON=/opt/conda/envs/py-rstudio/bin/python" >> /home/rstudio/app/.Renviron
+RUN echo "LD_LIBRARY_PATH=/opt/conda/envs/py-rstudio/lib" >> /home/rstudio/app/.Renviron
 
 # Copy rest of the project files
 #COPY . .
@@ -88,4 +111,14 @@ RUN echo "RETICULATE_PYTHON=/opt/conda/envs/py-rstudio/bin/python" >> /home/rstu
 # In terminal to run the image in the container:
 #  docker run -d -e PASSWORD=mypass123 -p 8787:8787 --name new_c-index cindex_multiverse_project
 # (run in Rstudio username: rstudio, password: mypass123)
+
+# # Steps followed for github-docker
+# # tag it
+# docker tag cindex_multiverse_project ghcr.io/bbolossierra/cindex_multiverse_project:1.0.0
+# # create token I did a fine grained, added just the repo I needed and selected: Actions Read and Write
+# # authentification:
+# echo github_token | docker login ghcr.io -u bbolossierra --password-stdin
+# docker push ghcr.io/bbolossierra/cindex_multiverse_project:1.0.0
+# docker pull ghcr.io/bbolossierra/cindex_multiverse_project:1.0.0
+
 

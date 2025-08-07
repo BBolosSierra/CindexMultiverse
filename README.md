@@ -1,84 +1,113 @@
-## Concordance index multiverse
+## The C-index Multiverse
+
+The C-index is a discrimination metric used in time-to-event prediction modeling. However, there are multiple implementations and choices that condition performance results. In this work, we study the effects of ties, censoring, time truncation and input transformations in the model ranking. 
+
+Given the multiple libraries used in this work, from R to python, we provide a Docker image with all code dependencies pre-installed.
 
 
-In this markdowns we are testing how the increase in censoring impacts the c index under various implementations from python and R. 
-
-Since it requires python to be run, the reticulate library is necesary. 
-
-Run the following in bash and install libraries:
+### Download files: 
 
 ```bash
-conda create -n py-rstudio python=3.10
-conda activate py-rstudio
-conda config --add channels conda-forge
-conda config --set channel_priority strict
-conda install numpy
-conda install pandas
-conda install pycox
-conda install lifelines
-conda install scikit-survival
-conda install tqdm
-# pysurvival has a problem with dependency on a deprecated package 'sklearn'. PysurvivalR has been created from the original python code by wrapping the c++ code for R.
-# The R wrapper can be installed:
-install.packages("./pysurvivalR.tar.gz", repos = NULL, type = "source")
+
+git clone https://github.com/BBolosSierra/CindexMultiverse.git
+cd CindexMultiverse
 
 ```
 
-The following set up is necessary for the python and R to be run in Rstudio. 
+### Docker:
 
-Make sure the conda environment created is loaded. If your bash default reticulate environment is set to a specific path, it might be necessary to unset with "Sys.unsetenv("RETICULATE_PYTHON")"
+```bash
 
-Run the following inside of a setup in R markdown ```{r setup}```
-
-```r 
-library(reticulate)
-
-#Sys.unsetenv("RETICULATE_PYTHON") 
-Sys.setenv(OMP_NUM_THREADS = "1")       # Limits OpenMP to 1 thread
-Sys.setenv(NUMBA_NUM_THREADS = "1")     # Limits Numba to 1 thread
-Sys.setenv(MKL_NUM_THREADS = "1")       # Limits Intel MKL to 1 thread
-Sys.setenv(KMP_WARNINGS = "0")          # Disables OpenMP warnings
-Sys.setenv(OPENBLAS_NUM_THREADS = "1")  # Limits OpenBLAS to 1 thread
-
-# To compile Rcpp Rpysurvivalwrapper:
-#Sys.setenv(CC = "clang")
-#Sys.setenv(CXX = "clang++")
-#Sys.setenv(CPPFLAGS = "-I/Library/Frameworks/R.framework/Versions/4.3-arm64/Resources/library/Rcpp/include")
-#Sys.setenv(LDFLAGS = "-L/Library/Frameworks/R.framework/Resources/lib")
-
-
-use_condaenv("/opt/homebrew/Caskroom/miniforge/base/envs/py-rstudio", required=TRUE)
+docker pull ghcr.io/bbolossierra/cindex_multiverse_project:1.0.2
 
 ```
 
-Make sure you have:
+### Interactively run Rstudio server:
 
-```r
-library(arrow)
-library(caret)
-library(riskRegression)
-library(prodlim)
-library(pec)
-library(survival)
-library(rhdf5)  #BiocManager::install("rhdf5")
-library(randomForestSRC)
-library(survAUC)
-library(Hmisc)
-library(dplyr)
-library(gridExtra)
-library(survC1)
-library(pysurvivalR) # with install.packages("./pysurvivalR.tar.gz")
-library(survivalmodels)
+```bash
+docker container run \
+  --mount type=bind,source="$(pwd)",target=/home/rstudio/project
+  -e PASSWORD=yourpassword \
+  -ti \
+  -p 8787:8787 \
+  ghcr.io/bbolossierra/cindex_multiverse_project:1.0.2
 
 ```
 
-If trying bootstraping with parallelization of R libraries
+Open your browser: http://localhost:8787
 
-```r
-## load libraries
-library(progressr) ## use progressr for procession updates
-library(doFuture)  ## attaches also foreach and future
-library(progressr) ## use progressr for procession updates
+To log in; Username: rstudio
+Password: yourpassword (or whatever you set)
+
+Use the Files pane to navigate to /CindexMultiverse
+
+### To remove the container:
+
+```bash
+
+docker rmi ghcr.io/bbolossierra/cindex_multiverse_project:1.0.2
 
 ```
 
+
+### R libraries
+
+```bash
+| Package | Version |
+|---------|---------|
+| rhdf5 | 2.46.1 |
+| graph | 1.80.0 |
+| Rgraphviz | 2.46.0 |
+| parallelly | 1.44.0 |
+| survival | 3.8.3 |
+| data.table | 1.17.2 |
+| stringr | 1.5.1 |
+| dplyr | 1.1.4 |
+| tidyr | 1.3.1 |
+| gridExtra | 2.3 |
+| ggalluvial | 0.12.5 |
+| cowplot | 1.1.3 |
+| patchwork | 1.3.0 |
+| arrow | 20.0.0 |
+| reticulate | 1.42.0 |
+| rmarkdown | 2.29 |
+| knitr | 1.50 |
+| Hmisc | 5.2.3 |
+| rms | 6.8.1 |
+| prodlim | 2025.4.28 |
+| pec | 2023.4.12 |
+| riskRegression | 2025.5.20 |
+| randomForestSRC | 3.4.0 |
+| caret | 7.0.1 |
+| doFuture | 1.0.2 |
+| future | 1.40.0 |
+| progressr | 0.15.1 |
+| foreach | 1.5.2 |
+| flexsurv | 2.3.2 |
+| furrr | 0.3.1 |
+| gtsummary | 2.2.0 |
+| kableExtra | 1.4.0 |
+| survivalmodels | 0.1.191 |
+| tidyverse | 2.0.0 |
+| cBioPortalData | 2.14.2 |
+|---------|---------|
+
+```
+
+### Python packages
+
+
+```bash
+
+| Package           | Version  |
+|-------------------|----------|
+| numpy             | 2.0.2    |
+| pandas            | 2.2.3    |
+| pycox             | 0.3.0    |
+| lifelines         | 0.30.0   |
+| scikit-survival   | 0.23.1   |
+| tqdm              | 4.67.1   |
+| numba             | 0.60.0   |
+|---------|---------|
+
+```
