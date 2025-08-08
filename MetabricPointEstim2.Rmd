@@ -10,7 +10,7 @@ Here we perform a 5-fold cross-validation of METABRIC, and compute the C-index w
 
 First we load the libraries
 
-```{r Load libraries include=FALSE}
+```{r Load libraries}
 # Survival metrics
 library(reticulate)
 library(arrow)
@@ -41,7 +41,7 @@ library(patchwork)
 ```
 
 
-```{r setup, include=FALSE}
+```{r setup}
 #Sys.unsetenv("RETICULATE_PYTHON")
 Sys.setenv(OMP_NUM_THREADS = "1")       # Limits OpenMP to 1 thread
 Sys.setenv(NUMBA_NUM_THREADS = "1")     # Limits Numba to 1 thread
@@ -493,7 +493,7 @@ Need to be able to calculate the C-index in 4 different ways:
 
 First create bootstrap samples of 1000 patients each
 
-```{r create samples, eval=FALSE}
+```{r create samples}
 
 set.seed(123)
 
@@ -514,7 +514,7 @@ resample_indices <- replicate(n_bootstraps,
 
 To evaluate how C-index varies depending on different time points t, and different values of tau:
 
-```{r select columns for bootstrap, eval = FALSE }
+```{r select columns for bootstrap}
 
 subset_risk <- list()
 
@@ -529,7 +529,7 @@ for (r in seq_along(resample_indices)) {
 ```
 
 
-```{r cindex estimate boostrap and point estimate, eval=FALSE}
+```{r cindex estimate boostrap and point estimate}
 ### need to create a list for all the models? 
 selected_risk <- colnames(subset_risk[[1]])[4:length(colnames(subset_risk[[1]]))]
 
@@ -611,18 +611,7 @@ risk_tau_10_plot   <- make_risk_plot_entries(results_risk_tau_10y, results_risk_
 ```
 
 
-```{r Plot risk at max uncensored, fig.height=10, fig.width=8}
-
-ggplot(risk_tau_maxU_plot, aes(x = as.numeric(Time), y = cindex, color = Model, group = Model)) +
-  geom_line(linewidth = 1) +
-  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3) +
-  facet_wrap(~ Metric) +
-  #ylim(0.5, 0.72) +
-  theme_minimal(base_size = 12) +
-  labs(x = "Time (t)", y = "C-index", color = "Implementation",
-       title = "") +
-  theme(legend.position = "bottom",
-        axis.text.x = element_text(angle = 45, hjust = 1))
+```{r Plot risk at max uncensored, fig.height=8, fig.width=10}
 
 
 ggplot(risk_tau_maxU_plot[(risk_tau_maxU_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_maxU_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, color = Metric, group = Metric)) +
@@ -640,57 +629,12 @@ ggplot(risk_tau_maxU_plot[(risk_tau_maxU_plot$Metric == "Hmisc::rcorr.cens" | ri
   theme(legend.position = "bottom",
         axis.text.x = element_text(angle = 45, hjust = 1))
 
-ggplot(risk_tau_maxU_plot[(risk_tau_maxU_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_maxU_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, shape = Metric, group = Metric)) +
-  geom_line(linewidth = 1, position = position_dodge(width = 0.3)) +
-  geom_errorbar(
-    position = position_dodge(width = 0.4),
-    aes(ymin = lower, ymax = upper)
-  ) +
-  geom_point(position = position_dodge(0.4)) +
-  facet_wrap(~ Model, ncol = 2) +
-  ylim(0.5, 0.72) +
-  theme_minimal(base_size = 14) +
-  labs(x = "Time (t)", y = "C-index", color = "Implementation",
-       title = "") +
-  theme(legend.position = "bottom",
-        axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 
 ```{r Plot risk at 10 years, fig.height=8, fig.width=10}
 
-ggplot(risk_tau_10_plot, aes(x = as.numeric(Time), y = cindex, color = Model, group = Model)) +
-  geom_line(linewidth = 1, position = position_dodge(width = 0.3)) +
-  geom_errorbar(
-    position = position_dodge(width = 0.4),
-    aes(ymin = lower, ymax = upper)
-  ) +
-  geom_point(position = position_dodge(0.4)) +
-  facet_wrap(~ Model, ncol = 2) +
-  ylim(0.5, 0.72) +
-  ylim(0.5, 0.72) +
-  theme_minimal(base_size = 12) +
-  labs(x = "Time (t)", y = "C-index", color = "Model",
-       title = "") +
-  theme(legend.position = "bottom",
-        axis.text.x = element_text(angle = 45, hjust = 1))
-
 ggplot(risk_tau_10_plot[(risk_tau_10_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_10_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, color = Metric, group = Metric)) +
-  geom_line(linewidth = 1, position = position_dodge(width = 0.3)) +
-  geom_errorbar(
-    position = position_dodge(width = 0.4),
-    aes(ymin = lower, ymax = upper)
-  ) +
-  geom_point(position = position_dodge(0.4)) +
-  facet_wrap(~ Model, ncol = 2) +
-  ylim(0.5, 0.72) +
-  theme_minimal(base_size = 12) +
-  labs(x = "Time (t)", y = "C-index", color = "Model",
-       title = "") +
-  theme(legend.position = "bottom",
-        axis.text.x = element_text(angle = 45, hjust = 1))
-
-ggplot(risk_tau_10_plot[(risk_tau_10_plot$Metric == "Hmisc::rcorr.cens" | risk_tau_10_plot$Metric == "pec::cindex"),], aes(x = as.numeric(Time), y = cindex, shape = Metric, group = Metric)) +
   geom_line(linewidth = 1, position = position_dodge(width = 0.3)) +
   geom_errorbar(
     position = position_dodge(width = 0.4),
@@ -711,7 +655,7 @@ ggplot(risk_tau_10_plot[(risk_tau_10_plot$Metric == "Hmisc::rcorr.cens" | risk_t
 
 For the paper, digestible analysis C, C_tau and Ctd
 
-```{r load results, include=FALSE}
+```{r load, include=FALSE}
 # saveRDS(
 #    list(
 #      results_risk1 = results_risk1,
@@ -755,10 +699,6 @@ For the paper, digestible analysis C, C_tau and Ctd
 
 ```
 
-```{r}
-#stacked_predictions <- readRDS("./Results/5FoldStackedPredictions.rds")
-```
-
 
 ```{r select columns}
 
@@ -784,7 +724,7 @@ for (r in seq_along(resample_indices)) {
 ```
 
 
-```{r cindex expected mortality, eval=FALSE}
+```{r cindex expected mortality}
 select_exps <- grep("ExpMort\\.",colnames(subset_expm[[1]]), value = TRUE)
 results_expm1 <- list()
 results_expm1_point_estim <- list()
@@ -870,7 +810,7 @@ for (exps in select_exps) {
                                                     eval.times = 120)
 }
 ```
-```{r cindex rmst, eval=FALSE}
+```{r cindex rmst}
 select_risk <- grep("RMST\\.",colnames(subset_risk[[1]]), value = TRUE)
 results_risk1 <- list() # boostrap results
 results_risk1_point_estim <- list() # point estimate results
@@ -1058,23 +998,6 @@ separator_positions <- seq(1.5, n_metrics - 0.5, by = 1)
   panel.grid.major.x = element_blank(),
   panel.grid.minor.x = element_blank())
  
-ggplot(df_plot, aes(x = Metric, y = cindex)) +
-  geom_pointrange(aes(ymin = lower, ymax = upper, shape=Model),
-                  position = position_dodge(width = 0.6), size = 0.5, color = "black") +
-   facet_wrap(~ Notation,  nrow = 4, ncol = 2, scales = "free_x", labeller = label_parsed)+
-   scale_shape_manual(values = c("RSF" = 15, "DeepHit" = 23, 
-                                 "CPH" = 19, "DeepSurv" = 22, "CoxTime" = 24)) +
-   geom_vline(xintercept = separator_positions, 
-              linetype = "dashed", color = "grey70") +
-   geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
-   ylim(0.5, 0.75) +
-   labs(title = "",
-       y = "C-index", x = NULL) +
-   theme_minimal(base_size = 19) +
-   theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom",
-  panel.grid.major.x = element_blank(),
-  panel.grid.minor.x = element_blank())
 
 ```
 
@@ -1088,4 +1011,3 @@ hist(as.numeric(results_surv[["RSF"]][["batch.metrics"]][, "pycox.Ant"]))
 hist(as.numeric(results_surv[["CoxPH"]][["batch.metrics"]][, "pycox.Ant"]))
 hist(as.numeric(results_surv[["DeepHit"]][["batch.metrics"]][, "pycox.Ant"]))
 ```
-
