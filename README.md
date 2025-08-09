@@ -23,14 +23,14 @@ For Mac computers follow https://docs.docker.com/desktop/setup/install/mac-insta
 
 ```bash
 
-docker pull ghcr.io/bbolossierra/cindex_multiverse_project:1.0.3
+docker pull ghcr.io/bbolossierra/cindex_multiverse_project:1.0.4
 
 ```
 
 ### Interactively run Rstudio server:
 
 ```bash
-docker container run --mount type=bind,source="$(pwd)",target=/home/rstudio/project -e PASSWORD=yourpassword -p 8787:8787 ghcr.io/bbolossierra/cindex_multiverse_project:1.0.3
+docker container run --mount type=bind,source="$(pwd)",target=/home/rstudio/project -e PASSWORD=yourpassword -p 8787:8787 ghcr.io/bbolossierra/cindex_multiverse_project:1.0.4
 
 ```
 
@@ -45,7 +45,7 @@ Use the Files pane to navigate to /CindexMultiverse
 
 ```bash
 
-docker rmi ghcr.io/bbolossierra/cindex_multiverse_project:1.0.3
+docker rmi ghcr.io/bbolossierra/cindex_multiverse_project:1.0.4
 
 ```
 

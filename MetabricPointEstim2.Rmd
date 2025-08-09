@@ -10,7 +10,7 @@ Here we perform a 5-fold cross-validation of METABRIC, and compute the C-index w
 
 First we load the libraries
 
-```{r Load libraries}
+```{r Load libraries, include=FALSE}
 # Survival metrics
 library(reticulate)
 library(arrow)
@@ -19,6 +19,8 @@ library(riskRegression)
 library(prodlim)
 library(pec)
 library(survival)
+library(survC1)
+library(SurvMetrics)
 library(rhdf5)
 library(randomForestSRC)
 library(Hmisc)
@@ -40,22 +42,16 @@ library(ggplot2)
 library(patchwork)
 ```
 
-
-```{r setup}
-#Sys.unsetenv("RETICULATE_PYTHON")
+```{r setup, echo=TRUE, include=TRUE}
 Sys.setenv(OMP_NUM_THREADS = "1")       # Limits OpenMP to 1 thread
 Sys.setenv(NUMBA_NUM_THREADS = "1")     # Limits Numba to 1 thread
 Sys.setenv(MKL_NUM_THREADS = "1")       # Limits Intel MKL to 1 thread
 Sys.setenv(KMP_WARNINGS = "0")          # Disables OpenMP warnings
 Sys.setenv(OPENBLAS_NUM_THREADS = "1")  # Limits OpenBLAS to 1 thread
 
-# #Sys.setenv(NUMBA_DISABLE_JIT = "0")  
-# library(reticulate)
+library(reticulate)
+py_config()
 
-#use_condaenv("/opt/homebrew/Caskroom/miniforge/base/envs/py-rstudio", required=TRUE)
-#use_virtualenv("~/.virtualenvs/venv-DeSurv_python_R")
-#use_python("/opt/homebrew/Caskroom/miniforge/base/envs/venv-DeSurv3/bin/python3.9")
-#py_config()
 ```
 
 We also load a set of helper functions used throughout our analysis:

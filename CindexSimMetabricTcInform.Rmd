@@ -10,6 +10,8 @@ date: "2025-02-27"
 
 Load libraries
 
+Load libraries
+
 ```{r Load libraries, include=FALSE}
 # Survival metrics
 library(reticulate)
@@ -19,6 +21,8 @@ library(riskRegression)
 library(prodlim)
 library(pec)
 library(survival)
+library(survC1)
+library(SurvMetrics)
 library(rhdf5)
 library(randomForestSRC)
 library(Hmisc)
@@ -35,26 +39,21 @@ library(flexsurv)
 library(furrr)
 library(pysurvivalR)
 library(survivalmodels)
-library(tidyverse)
+library(tidyr)
+library(ggplot2)
 library(patchwork)
 ```
 
-
-```{r Setup, include=FALSE}
-#Sys.unsetenv("RETICULATE_PYTHON")
+```{r setup, echo=TRUE, include=TRUE}
 Sys.setenv(OMP_NUM_THREADS = "1")       # Limits OpenMP to 1 thread
 Sys.setenv(NUMBA_NUM_THREADS = "1")     # Limits Numba to 1 thread
 Sys.setenv(MKL_NUM_THREADS = "1")       # Limits Intel MKL to 1 thread
 Sys.setenv(KMP_WARNINGS = "0")          # Disables OpenMP warnings
 Sys.setenv(OPENBLAS_NUM_THREADS = "1")  # Limits OpenBLAS to 1 thread
 
-# #Sys.setenv(NUMBA_DISABLE_JIT = "0")  
-# library(reticulate)
+library(reticulate)
+py_config()
 
-#use_condaenv("/opt/homebrew/Caskroom/miniforge/base/envs/py-rstudio", required=TRUE)
-#use_virtualenv("~/.virtualenvs/venv-DeSurv_python_R")
-#use_python("/opt/homebrew/Caskroom/miniforge/base/envs/venv-DeSurv3/bin/python3.9")
-#py_config()
 ```
 
 ### Introduction
@@ -900,162 +899,4 @@ p4
 p3
 ```
 
-
-#### Need to test antolinis in R too: 
-
-
-Select a dataset with high degree of censoring: 
-
-
-```{r}
-set.seed(123)
-
-n_bootstraps <- 100
-
-model_names <- "CoxPH" 
-
-subset <- stacked_predictions[[5]]
-
-results_surv_Km <- vector("list", length = 10)
-
-for (dataset in seq_along(subset)) {
-  
-  dataset_size <- nrow(subset[[dataset]])
-      # Get lambda 
-  lambda = unique(subset[[dataset]]$lambda)
-  # Create bootstrap samples
-  resample_indices <- replicate(n_bootstraps, 
-                                  sample(subset[[dataset]]$patients_ids, 
-                                         size = dataset_size, replace = TRUE), 
-                                  simplify = FALSE)
-  # When eval is at max uncensored time
-  # Create empty lists
-  subset_surv <- list()
-
-  # Boostrapping
-  for (r in seq_along(resample_indices)){
-    subset_surv[[r]] <- get_model_preds2(stacked_predictions = subset[[dataset]], 
-                model_names = "CoxPH",
-                input_type = "Distribution",
-                bootstrap_patient_ids = resample_indices[[r]])
-  }
-    
-  for (model in model_names) {
-    # Antolinis
-    cat("Calculating bootstrap for Distribution for Model = ", model, "\n")
-    results_surv_Km[[dataset]][[model]] <-  bootstrap.metric(metrics.wrapper,
-                                    dataset=list(
-                                       predicted = model,
-                                       censoring = "test_status",
-                                       time = "test_time"),
-                                    implementation = list("pycox.Ant", "pycox.Adj.Ant"),
-                                    sampled_data = subset_surv)
-  }
-}
-```
-
-```{r}
-
-pycoxR_SurvMatrix_Ant <- function(time, surv_matrix, censoring){
-  ### As difference from the previous one, this function calculates
-  ### c-index across all times 
-
-  np <- import("numpy", convert = FALSE)  
-  pd <- import("pandas", convert = FALSE)
-  EvalSurv <- import("pycox.evaluation", convert = FALSE)$EvalSurv
-  
-  # Convert R to python with correct float or int
-  time_py <- np$array(as.numeric(time), dtype = "float64")  
-  #time_py <- np$round(time_py, as.integer(2))
-  #time_py <- np$array(as.numeric(time_py), dtype = "float64")  
-  censoring_py <- np$array(as.integer(censoring), dtype = "int32")
-  # Transpose the survival matrix
-  surv_mat <- t(as.matrix(surv_matrix))  # now: rows = times, cols = patients
-  
-  # Convert to numpy
-  surv_np <- np$array(surv_mat, dtype = "float64")
-
-  # Time index 
-  time_index <- np$array(as.numeric(colnames(surv_matrix)), dtype = "float64")
-  
-  # Create pandas dataframe
-  surv_df <- pd$DataFrame(data = surv_np, index = time_index)
-
-  ev <- EvalSurv(surv_df, time_py, censoring_py)
-  
-  py_to_r(ev$concordance_td(method = "antolini"))
-}
-
-pycoxR_SurvMatrix_AdjAnt <- function(time, surv_matrix, censoring){
-  ### As difference from the previous one, this function calculates
-  ### c-index across all times 
-  np <- import("numpy", convert = FALSE)  
-  pd <- import("pandas", convert = FALSE)
-  EvalSurv <- import("pycox.evaluation", convert = FALSE)$EvalSurv
-  
-  # Convert R to python with correct float or int
-  time_py <- np$array(as.numeric(time), dtype = "float64")  
-  censoring_py <- np$array(as.integer(censoring), dtype = "int32")
-  # Transpose the survival matrix
-  surv_mat <- t(as.matrix(surv_matrix))  # now: rows = times, cols = patients
-  
-  # Convert to numpy
-  surv_np <- np$array(surv_mat, dtype = "float64")
-  
-  # Time index 
-  time_index <- np$array(as.numeric(colnames(surv_matrix)), dtype = "float64")
-  
-  # Create pandas dataframe
-  surv_df <- pd$DataFrame(data = surv_np, index = time_index)
-  
-  ev <- EvalSurv(surv_df, time_py, censoring_py)
-  
-  py_to_r(ev$concordance_td(method = "adj_antolini"))
-}
-
-set.seed(123)
-
-n_bootstraps <- 100
-
-model_names <- "CoxPH" 
-
-subset <- stacked_predictions[[5]]
-
-results_surv_noKm <- vector("list", length = 10)
-
-for (dataset in seq_along(subset)) {
-  
-  dataset_size <- nrow(subset[[dataset]])
-      # Get lambda 
-  lambda = unique(subset[[dataset]]$lambda)
-  # Create bootstrap samples
-  resample_indices <- replicate(n_bootstraps, 
-                                  sample(subset[[dataset]]$patients_ids, 
-                                         size = dataset_size, replace = TRUE), 
-                                  simplify = FALSE)
-  # When eval is at max uncensored time
-  # Create empty lists
-  subset_surv <- list()
-
-  # Boostrapping
-  for (r in seq_along(resample_indices)){
-    subset_surv[[r]] <- get_model_preds2(stacked_predictions = subset[[dataset]], 
-                model_names = "CoxPH",
-                input_type = "Distribution",
-                bootstrap_patient_ids = resample_indices[[r]])
-  }
-    
-  for (model in model_names) {
-    # Antolinis
-    cat("Calculating bootstrap for Distribution for Model = ", model, "\n")
-    results_surv_noKm[[dataset]][[model]] <-  bootstrap.metric(metrics.wrapper,
-                                    dataset=list(
-                                       predicted = model,
-                                       censoring = "test_status",
-                                       time = "test_time"),
-                                    implementation = list("pycox.Ant", "pycox.Adj.Ant"),
-                                    sampled_data = subset_surv)
-  }
-}
-```
 

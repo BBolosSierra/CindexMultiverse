@@ -19,6 +19,8 @@ library(riskRegression)
 library(prodlim)
 library(pec)
 library(survival)
+library(survC1)
+library(SurvMetrics)
 library(rhdf5)
 library(randomForestSRC)
 library(Hmisc)
@@ -35,28 +37,22 @@ library(flexsurv)
 library(furrr)
 library(pysurvivalR)
 library(survivalmodels)
-library(tidyverse)
+library(tidyr)
+library(ggplot2)
 library(patchwork)
-library(stringr) 
+library(stringr)
 ```
 
-
-
-```{r Setup, include=FALSE}
-#Sys.unsetenv("RETICULATE_PYTHON")
+```{r setup, echo=TRUE, include=TRUE}
 Sys.setenv(OMP_NUM_THREADS = "1")       # Limits OpenMP to 1 thread
 Sys.setenv(NUMBA_NUM_THREADS = "1")     # Limits Numba to 1 thread
 Sys.setenv(MKL_NUM_THREADS = "1")       # Limits Intel MKL to 1 thread
 Sys.setenv(KMP_WARNINGS = "0")          # Disables OpenMP warnings
 Sys.setenv(OPENBLAS_NUM_THREADS = "1")  # Limits OpenBLAS to 1 thread
 
-# #Sys.setenv(NUMBA_DISABLE_JIT = "0")  
-# library(reticulate)
+library(reticulate)
+py_config()
 
-#use_condaenv("/opt/homebrew/Caskroom/miniforge/base/envs/py-rstudio", required=TRUE)
-#use_virtualenv("~/.virtualenvs/venv-DeSurv_python_R")
-#use_python("/opt/homebrew/Caskroom/miniforge/base/envs/venv-DeSurv3/bin/python3.9")
-#py_config()
 ```
 
 ### Introduction
@@ -658,58 +654,6 @@ ggplot(dat_plot[dat_plot$Model == "CoxPH", ],
 
 ```
 
-```{r, fig.width=8, fig.height=9}
-# Filter relevant metrics
-dat_plot <- final_df %>%
-  filter(Metric %in% c("Hmisc::rcorr.cens", "pec::cindex", "pycox.Ant")) %>%
-  filter(!(Implementation == "Hmisc" & 
-           Measure == "tilde(C)[tau]~(RMST~tau==100~months)"))
-
-oracle_means <- dat_plot |>
-  filter(Model == "Oracle") |>
-  group_by(Implementation, Measure) |>
-  summarise(
-    oracle_mean = median(Cindex, na.rm = TRUE),
-    oracle_sd   = sd(Cindex, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# Join back to get Oracle values for difference calculation
-dat_plot <- dat_plot %>%
-  left_join(oracle_means, by = c("Implementation", "Measure")) %>%
-  mutate(Cindex_diff = Cindex - oracle_mean)
-
-# Plot difference from Oracle for CoxPH only
-ggplot(dat_plot[dat_plot$Model == "CoxPH", ], 
-       aes(x = CP_Label, y = Cindex_diff, fill = Notation)) +
-  geom_violin(alpha = 0.2, color = "black") +
-  stat_summary(
-    fun = median, geom = "point", shape = 21,
-    size = 2, fill = "black", color = "black",
-    position = position_dodge(width = 0.9)
-  ) +
-  # Oracle SD band (now around 0)
-  geom_rect(
-    data = oracle_means,
-    aes(xmin = -Inf, xmax = Inf,
-        ymin = -oracle_sd, ymax = oracle_sd),
-    fill = "grey40", alpha = 0.1, inherit.aes = FALSE
-  ) +
-  # Oracle horizontal line (now at 0)
-  geom_hline(
-    yintercept = 0,
-    color = "black", linetype = "dashed", linewidth = 0.7
-  ) +
-  facet_wrap(~Implementation + Measure, labeller = label_parsed) +
-  scale_fill_discrete(labels = scales::parse_format()) +
-  labs(y = expression((C~index) - (C~index)^oracle), x = "Censoring percentage") +
-  theme_minimal(base_size = 12) +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "bottom"
-  )
-
-```
 
 ```{r fig.width=8, fig.height=9}
 # Step 1: Filter for relevant models and metrics
@@ -788,30 +732,7 @@ ggplot(df_wide, aes(x = as.factor(DeltaCP_Label), y = CindexDiff, fill = Notatio
 ```
 
 
-```{r Plot subset, fig.width=8, fig.height=9}
-
-final_df <- final_df[final_df$Model == "CoxPH", ]
-
-dat <- final_df[(final_df$Metric %in% c("Hmisc::rcorr.cens", "pec::cindex", "pycox.Ant")),]
-
-notation_levels <- levels(factor(dat$Notation)) 
-
-ggplot(dat,
-       aes(x = CP_Label, y = Cindex, fill = Notation)) +
-  stat_summary(fun = median, geom = "point", shape = 21, 
-               size = 2, fill = "black", color = "black", 
-               position = position_dodge(width = 0.9)) +
-  geom_violin(alpha = 0.2, color = "black") +
-  facet_wrap(~Implementation + Measure, labeller = label_parsed) +
-  scale_fill_discrete(labels = scales::parse_format()) +  
-  labs(
-       y = "C-index",
-       x = "Censoring percentage") +
-  theme_minimal(base_size = 12) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
-```
-
-```{r Difference to the 0% censoring fig.width=8, fig.height=9}
+```{r Difference with no censoring, fig.width=8, fig.height=9}
 
 final_df <- final_df[final_df$Model == "CoxPH", ]
 

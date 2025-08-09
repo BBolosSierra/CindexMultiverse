@@ -18,11 +18,15 @@ library(riskRegression)
 library(prodlim)
 library(pec)
 library(survival)
+library(survC1)
+library(SurvMetrics)
 library(rhdf5)
 library(randomForestSRC)
 library(Hmisc)
 library(dplyr)
+# Plotting
 library(gridExtra)
+# Parallelization
 library(doFuture)
 library(future)
 library(progressr)
@@ -32,23 +36,21 @@ library(flexsurv)
 library(furrr)
 library(pysurvivalR)
 library(survivalmodels)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
 ```
 
-```{r Setup, include=FALSE}
-#Sys.unsetenv("RETICULATE_PYTHON")
+```{r setup, echo=TRUE, include=TRUE}
 Sys.setenv(OMP_NUM_THREADS = "1")       # Limits OpenMP to 1 thread
 Sys.setenv(NUMBA_NUM_THREADS = "1")     # Limits Numba to 1 thread
 Sys.setenv(MKL_NUM_THREADS = "1")       # Limits Intel MKL to 1 thread
 Sys.setenv(KMP_WARNINGS = "0")          # Disables OpenMP warnings
 Sys.setenv(OPENBLAS_NUM_THREADS = "1")  # Limits OpenBLAS to 1 thread
 
-# #Sys.setenv(NUMBA_DISABLE_JIT = "0")  
-# library(reticulate)
+library(reticulate)
+py_config()
 
-#use_condaenv("/opt/homebrew/Caskroom/miniforge/base/envs/py-rstudio", required=TRUE)
-#use_virtualenv("~/.virtualenvs/venv-DeSurv_python_R")
-#use_python("/opt/homebrew/Caskroom/miniforge/base/envs/venv-DeSurv3/bin/python3.9")
-#py_config()
 ```
 
 ### Introduction
@@ -126,7 +128,7 @@ names(mb)[names(mb) %in% names(var_map)] <- var_map[names(mb)[names(mb) %in% nam
 
 
 # Order according to time and status
-mb[order(mb$time, -mb$status),]
+#mb[order(mb$time, -mb$status),]
 
 ```
 
@@ -432,9 +434,9 @@ structured_datasets_inform <- list(
 )
 
 # Save the structured list as RDS
-saveRDS(structured_datasets_weibull, "./Datasets/Synthetic/10d_synthetic_WT_WTc.rds")
-saveRDS(structured_datasets_uniform, "./Datasets/Synthetic/10d_synthetic_WT_UTc.rds")
-saveRDS(structured_datasets_inform, "./Datasets/Synthetic/10d_synthetic_WT_ITc.rds")
+#saveRDS(structured_datasets_weibull, "./Datasets/Synthetic/10d_synthetic_WT_WTc.rds")
+#saveRDS(structured_datasets_uniform, "./Datasets/Synthetic/10d_synthetic_WT_UTc.rds")
+#saveRDS(structured_datasets_inform, "./Datasets/Synthetic/10d_synthetic_WT_ITc.rds")
 
 ```
 
@@ -457,7 +459,7 @@ for (i in seq_along(datasets)){
     # Extract data set
     dat <- data.frame(datasets[[i]][[j]])
     attributes(dat) <- attributes(datasets[[i]][[j]])
-    print(attributes(dat)$seed)
+    #print(attributes(dat)$seed)
     # Print betas
     seed_list[[i]][[j]] <- attributes(dat)$seed
   }

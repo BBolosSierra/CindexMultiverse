@@ -29,8 +29,8 @@ tryCatch({
 })
 
 install.packages(c(
-  "prodlim", "pec", "riskRegression", "randomForestSRC",
-  "doFuture", "future", "progressr", "foreach", "flexsurv",
+  "prodlim", "pec", "riskRegression", "randomForestSRC", "survC1",
+  "doFuture", "future", "progressr", "foreach", "flexsurv", "SurvMetrics",
   "furrr", "gtsummary", "kableExtra", "survivalmodels", "tidyverse"
 ), lib = lib_path)
 
