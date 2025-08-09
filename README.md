@@ -16,21 +16,21 @@ cd CindexMultiverse
 
 ### Docker:
 
+Install docker from https://www.docker.com
+
+For Mac computers follow https://docs.docker.com/desktop/setup/install/mac-install/
+
+
 ```bash
 
-docker pull ghcr.io/bbolossierra/cindex_multiverse_project:1.0.2
+docker pull ghcr.io/bbolossierra/cindex_multiverse_project:1.0.3
 
 ```
 
 ### Interactively run Rstudio server:
 
 ```bash
-docker container run \
-  --mount type=bind,source="$(pwd)",target=/home/rstudio/project
-  -e PASSWORD=yourpassword \
-  -ti \
-  -p 8787:8787 \
-  ghcr.io/bbolossierra/cindex_multiverse_project:1.0.2
+docker container run --mount type=bind,source="$(pwd)",target=/home/rstudio/project -e PASSWORD=yourpassword -p 8787:8787 ghcr.io/bbolossierra/cindex_multiverse_project:1.0.3
 
 ```
 
@@ -45,10 +45,9 @@ Use the Files pane to navigate to /CindexMultiverse
 
 ```bash
 
-docker rmi ghcr.io/bbolossierra/cindex_multiverse_project:1.0.2
+docker rmi ghcr.io/bbolossierra/cindex_multiverse_project:1.0.3
 
 ```
-
 
 ### R libraries
 

@@ -5,6 +5,9 @@ WORKDIR /home/rstudio/app
 
 # System dependencies
 RUN apt-get update && apt-get install -y curl tar sed \
+    libxml2 \
+    libxml2-dev \
+    libffi-dev \ 
     libgmp-dev \ 
     libgraphviz-dev \
     graphviz \
@@ -54,7 +57,10 @@ RUN ARCH=$(uname -m) && \
 # Add conda to PATH
 ENV PATH="/opt/conda/bin:$PATH"
 
-ENV LD_LIBRARY_PATH="/opt/conda/envs/py-rstudio/lib:$LD_LIBRARY_PATH"
+ENV RETICULATE_PYTHON="/opt/conda/envs/py-rstudio/bin/python"
+
+#ENV LD_LIBRARY_PATH="/opt/conda/envs/py-rstudio/lib:$LD_LIBRARY_PATH"
+ENV LD_LIBRARY_PATH="/opt/conda/envs/py-rstudio/lib"
 
 #RUN conda create -n py-rstudio -c conda-forge --override-channels \
 #    python=3.9.21 -y
@@ -65,10 +71,13 @@ ENV CONDA_ALWAYS_YES=true
 # Create base environment
 RUN conda create -n py-rstudio python=3.9.21 -c conda-forge --override-channels
 
+RUN conda run -n py-rstudio conda install -c conda-forge --override-channels -y \
+    'libstdcxx-ng>=12' 'libgcc-ng>=12'
+
 # Install remaining packages via `conda run` so the env is properly used
 RUN conda run -n py-rstudio conda install -c conda-forge --override-channels \
     numpy=2.0.2 pandas=2.2.3 tqdm=4.67.1 numba=0.60.0 lifelines=0.30.0 \
-    scikit-survival=0.23.1 openssl=3.2.0 h5py libcurl
+    scikit-survival=0.23.1 openssl=3.2.0 h5py libcurl 
 
 # Install pycox via pip (more stable)
 RUN conda run -n py-rstudio pip install torch torchtuples pycox==0.3.0 && \
@@ -82,9 +91,16 @@ RUN mkdir -p /home/rstudio/app/r-lib && \
     echo "R_LIBS=/home/rstudio/app/r-lib" >> /home/rstudio/app/.Renviron
 
 # Ensure reticulate uses the correct Python
-RUN echo "RETICULATE_PYTHON=/opt/conda/envs/py-rstudio/bin/python" >> /home/rstudio/app/.Renviron
+RUN echo "RETICULATE_PYTHON=/opt/conda/envs/py-rstudio/bin/python" >> /home/rstudio/.Renviron
+
+
 
 RUN install2.r --error remotes \ 
+    reticulate \
+    caret \ 
+    rmarkdown \
+    arrow \
+    knitr \
     BiocManager \
     RcppArmadillo \ 
     rstan \
@@ -101,7 +117,10 @@ RUN R CMD build pysurvivalR && \
 COPY install_packages.R ./
 RUN Rscript install_packages.R
 
-RUN echo "LD_LIBRARY_PATH=/opt/conda/envs/py-rstudio/lib" >> /home/rstudio/app/.Renviron
+ENV LD_PRELOAD=/opt/conda/envs/py-rstudio/lib/libstdc++.so.6:/opt/conda/envs/py-rstudio/lib/libgcc_s.so.1
+
+
+#RUN echo "LD_LIBRARY_PATH=/opt/conda/envs/py-rstudio/lib" >> /home/rstudio/app/.Renviron
 
 # Copy rest of the project files
 #COPY . .

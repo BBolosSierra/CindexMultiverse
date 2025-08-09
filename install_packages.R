@@ -16,7 +16,7 @@ install.packages(c(
   "survival", #"MASS", "lattice", "Formula", "SparseM", 
   "data.table",
   "stringr", "dplyr", "tidyr", "gridExtra", "ggalluvial",
-  "cowplot", "patchwork", "arrow", "reticulate", "rmarkdown", "knitr"
+  "cowplot", "patchwork"
 ), lib = lib_path)
 
 install.packages("Hmisc", lib = lib_path)
@@ -29,12 +29,12 @@ tryCatch({
 })
 
 install.packages(c(
-  "prodlim", "pec", "riskRegression", "randomForestSRC", "caret",
+  "prodlim", "pec", "riskRegression", "randomForestSRC",
   "doFuture", "future", "progressr", "foreach", "flexsurv",
   "furrr", "gtsummary", "kableExtra", "survivalmodels", "tidyverse"
 ), lib = lib_path)
 
-tinytex::install_tinytex(force = TRUE)
+#tinytex::install_tinytex(force = TRUE)
 
 BiocManager::install("cBioPortalData", ask = FALSE, update = TRUE)
 

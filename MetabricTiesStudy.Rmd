@@ -13,9 +13,8 @@ rounding.
 In this section, we first load the required libraries:
 
 
-```{r include=FALSE}
+```{r load libraries, include=FALSE}
 # Survival metrics
-library(reticulate)
 library(arrow)
 library(caret)
 library(riskRegression)
@@ -38,30 +37,19 @@ library(flexsurv)
 library(furrr)
 library(tidyr)
 library(kableExtra)
+library(ggplot2)
 ```
 
 
-```{r setup, include=FALSE}
-#Sys.unsetenv("RETICULATE_PYTHON")
+```{r setup, echo=TRUE, include=TRUE}
 Sys.setenv(OMP_NUM_THREADS = "1")       # Limits OpenMP to 1 thread
 Sys.setenv(NUMBA_NUM_THREADS = "1")     # Limits Numba to 1 thread
 Sys.setenv(MKL_NUM_THREADS = "1")       # Limits Intel MKL to 1 thread
 Sys.setenv(KMP_WARNINGS = "0")          # Disables OpenMP warnings
 Sys.setenv(OPENBLAS_NUM_THREADS = "1")  # Limits OpenBLAS to 1 thread
 
-# #Sys.setenv(NUMBA_DISABLE_JIT = "0")  
-#library(reticulate)
-
-#use_condaenv("/opt/conda/envs/py-rstudio/bin/python", required=TRUE)
-#use_virtualenv("~/.virtualenvs/venv-DeSurv_python_R")
-#use_python("/opt/homebrew/Caskroom/miniforge/base/envs/venv-DeSurv3/bin/python3.9")
-#py_config()
-
 library(reticulate)
-
-use_condaenv("py-rstudio", required = TRUE)  # Uses env name, not full path
-py_config()  
-
+py_config()
 
 ```
 
@@ -540,7 +528,7 @@ df_plot <- bind_rows(surv_df_plot, rmst_pec_excl_ties, rmst_pec_incl_ties,
 ```
 
 
-```{r Plot fig.width=8, fig.height=11}
+```{r Plot, fig.width=8, fig.height=11}
 # Plot
 df_plot$Notation <- factor(df_plot$Notation,
   levels = c("C_tau_10", "C_td"),
@@ -653,12 +641,12 @@ library(doFuture)
 library(future)
 library(progressr)
 library(foreach)
-library(MASS)
 library(flexsurv)
 library(furrr)
 library(pysurvivalR)
 library(survivalmodels)
 library(tidyr)
+library(ggplot2)
 ```
 
 We also re-load the data. 
@@ -1109,7 +1097,7 @@ surv_df_plot <- make_surv_plot_entries(results_surv_bo, results_surv_pe)
 ```
 
 
-```{r Format plot 2,  fig.width=8, fig.height=11}
+```{r Format plot 2,  fig.width=8, fig.height=7}
 # Add notation
 surv_df_plot$Notation           <- "C_td"
 rmst_df_plot_incl_ties$Notation <- ifelse(rmst_df_plot_incl_ties$Metric == "pec::cindex", "C_tau_10", "C")
