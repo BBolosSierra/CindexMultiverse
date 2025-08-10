@@ -37,6 +37,7 @@ library(pysurvivalR)
 library(survivalmodels)
 library(tidyverse)
 library(patchwork)
+library(stringr)
 ```
 
 ```{r setup, echo=TRUE, include=TRUE}
@@ -706,7 +707,7 @@ df_pairs$survival.n.Concordant <- df_pairs$survival.n.CP
 ```
 
 
-```{r, Ploting comparable concordant, fig.width=8, fig.height=10}
+```{r Ploting comparable concordant, fig.width=8, fig.height=10}
 # Reshape to long format
 df_long <- df_pairs[,
   c("survival.n.G2.Concordant", "survival.n.G2.Comparable", 

@@ -42,6 +42,7 @@ library(survivalmodels)
 library(tidyr)
 library(ggplot2)
 library(patchwork)
+library(stringr)
 ```
 
 ```{r setup, echo=TRUE, include=TRUE}
@@ -108,7 +109,7 @@ factors <- c(0, 0.5, 1.5, 3, 7, 13)
 
 Only with CoxPH
 
-```{r Cross-validation, message=FALSE}
+```{r Cross-validation, message=FALSE, include=FALSE}
 
 set.seed(123)
 
@@ -301,7 +302,7 @@ stacked_predictions <- readRDS( "./Results/InformativeSyntheticStackedPrediction
 
 Do not run this one if the previous code was run.
 
-```{r}
+```{r load results}
 results_per_lambda <- readRDS("./Results/InformativeSynthetic.rds")
 datasets_per_lambda <- 100
 factors <- c(0, 0.5, 1.5, 3, 7, 13)
@@ -310,7 +311,7 @@ factors <- c(0, 0.5, 1.5, 3, 7, 13)
 Here we will focus only in point estimates (we do not perform bootstrap). 
 
 
-```{r C-index Point estimates}
+```{r C-index Point estimates, include=FALSE}
 
 results_rmst_point_estim <- vector("list", length = datasets_per_lambda)
 results_rmst_point_estim2 <- vector("list", length = datasets_per_lambda)
@@ -676,7 +677,7 @@ ggplot(dat,
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
-```{r Difference to the 0% censoring fig.width=8, fig.height=9}
+```{r Difference to no censoring, fig.width=8, fig.height=9}
 
 final_df <- final_df[final_df$Model == "CoxPH", ]
 
@@ -801,7 +802,7 @@ df_pairs$survival.n.Concordant <- df_pairs$survival.n.CP
 ```
 
 
-```{r Plot, fig.width=8, fig.height=10}
+```{r Plot pairs, fig.width=8, fig.height=10}
 # Reshape to long format
 df_long <- df_pairs[,
   c("survival.n.G2.Concordant", "survival.n.G2.Comparable", 

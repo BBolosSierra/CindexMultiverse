@@ -114,7 +114,7 @@ factors <- c(0, 0.5, 1.5, 3, 7, 13)
 
 Only with CoxPH
 
-```{r Cross-validation, message=FALSE}
+```{r Cross-validation, message=FALSE, include=FALSE}
 
 set.seed(123)
 
@@ -314,7 +314,7 @@ factors <- c(0, 0.5, 1.5, 3, 7, 13)
 Here we will focus only in point estimates (we do not perform bootstrap). 
 
 
-```{r C-index Point estimates}
+```{r C-index Point estimates, include=FALSE}
 
 results_rmst_point_estim <- vector("list", length = datasets_per_lambda)
 results_rmst_point_estim2 <- vector("list", length = datasets_per_lambda)
