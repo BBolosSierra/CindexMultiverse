@@ -293,7 +293,7 @@ for (i in seq_along(datasets)){
 
 #saveRDS(stacked_predictions, "./Results/InformativeSyntheticStackedPredictions.rds")
 
-stacked_predictions <- readRDS( "./Results/InformativeSyntheticStackedPredictions.rds")
+#stacked_predictions <- readRDS( "./Results/InformativeSyntheticStackedPredictions.rds")
 #stacked_predictions <- readRDS( "./Results/WeibullSyntheticStackedPredictions_v2.rds")
 ```
 
